@@ -193,8 +193,8 @@ export default function VideoPreview({
             <Image
               src="https://placehold.co/1280x720.png"
               alt="Media preview placeholder"
-              layout="fill"
-              objectFit="cover"
+              fill
+              className="object-cover"
               data-ai-hint="video screen abstract"
               priority
             />
