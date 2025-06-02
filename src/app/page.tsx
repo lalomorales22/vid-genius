@@ -12,7 +12,7 @@ import TimelineControls from "@/components/vidgenius/TimelineControls";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useToast } from "@/hooks/use-toast";
 import { generateCaptions, GenerateCaptionsInput, GenerateCaptionsOutput } from "@/ai/flows/generate-captions";
-import { editVideoWithAI, EditVideoWithAIInput, EditVideoWithAIOutput } from "@/ai/flows/edit-video-with-ai";
+import { editVideoWithAI, EditVideoWithAIInput, EditVideoWithAIOutput, EditVideoWithAIOutputSchema } from "@/ai/flows/edit-video-with-ai";
 
 
 export interface MediaFile {
@@ -67,10 +67,8 @@ export default function VidGeniusPage() {
       track.clips.forEach(clip => {
         let clipDuration = 0;
         if (clip.type === 'caption') {
-          // For captions, sourceStart is 0 and sourceEnd is the duration.
           clipDuration = clip.sourceEnd - clip.sourceStart;
         } else {
-          // For video/audio, it's the trimmed duration from the source.
           clipDuration = clip.sourceEnd - clip.sourceStart;
         }
         const clipEndTime = clip.timelineStart + clipDuration;
@@ -172,7 +170,7 @@ export default function VidGeniusPage() {
         mediaElement.remove();
       };
       mediaElement.onerror = () => {
-        resolve(0); // Resolve with 0 if there's an error
+        resolve(0); 
         URL.revokeObjectURL(objectUrl);
         mediaElement.remove();
         console.error("Error loading media metadata for duration check");
@@ -208,35 +206,61 @@ export default function VidGeniusPage() {
 
       setMediaLibrary((prevLibrary) => [...prevLibrary, newMediaFile]);
 
-      const trackType = file.type.startsWith('video/') ? 'video' : (file.type.startsWith('audio/') ? 'audio' : 'caption');
-      const existingTracksOfType = tracks.filter(t => t.type === trackType);
-      const newTrackName = `${trackType.charAt(0).toUpperCase() + trackType.slice(1)} Track ${existingTracksOfType.length + 1}`;
-      const newTrackId = `track-${trackType}-${Date.now()}`;
+      const trackType = file.type.startsWith('video/') ? 'video' : 'audio';
+      let targetTrack: Track | undefined = tracks.find(t => t.type === trackType);
+      let newClipTimelineStart = 0;
+      let toastMessage: string;
+
+      if (targetTrack) {
+        // Add to existing track of this type
+        if (targetTrack.clips.length > 0) {
+          const lastClip = targetTrack.clips[targetTrack.clips.length - 1];
+          newClipTimelineStart = lastClip.timelineStart + (lastClip.sourceEnd - lastClip.sourceStart);
+        }
+        toastMessage = `${newMediaFile.name} added to ${targetTrack.name}.`;
+      } else {
+        // Create new track
+        const newTrackName = `${trackType.charAt(0).toUpperCase() + trackType.slice(1)} Track 1`;
+        const newTrackId = `track-${trackType}-${Date.now()}`;
+        targetTrack = {
+          id: newTrackId,
+          name: newTrackName,
+          type: trackType,
+          clips: [],
+        };
+        toastMessage = `${newMediaFile.name} added to new track: ${targetTrack.name}.`;
+      }
 
       const newClip: Clip = {
         id: `clip-${newMediaFile.id}-${Date.now()}`,
         mediaFileId: newMediaFile.id,
-        trackId: newTrackId,
+        trackId: targetTrack.id,
         name: newMediaFile.name,
         type: trackType,
         sourceStart: 0,
         sourceEnd: newMediaFile.duration,
-        timelineStart: 0,
-        color: trackType === 'video' ? 'bg-blue-500' : (trackType === 'audio' ? 'bg-green-500' : 'bg-orange-500'),
+        timelineStart: newClipTimelineStart,
+        color: trackType === 'video' ? 'bg-blue-500' : 'bg-green-500',
       };
 
-      const newTrack: Track = {
-        id: newTrackId,
-        name: newTrackName,
-        type: trackType,
-        clips: [newClip],
-      };
-
-      setTracks((prevTracks) => [...prevTracks, newTrack]);
+      setTracks((prevTracks) => {
+        const existingTrackIndex = prevTracks.findIndex(t => t.id === targetTrack!.id);
+        if (existingTrackIndex > -1) {
+          const updatedTracks = [...prevTracks];
+          updatedTracks[existingTrackIndex] = {
+            ...updatedTracks[existingTrackIndex],
+            clips: [...updatedTracks[existingTrackIndex].clips, newClip],
+          };
+          return updatedTracks;
+        } else {
+          return [...prevTracks, { ...targetTrack!, clips: [newClip] }];
+        }
+      });
+      
       setTimeout(() => {
         toast({
           title: "Media Added",
-          description: `${newMediaFile.name} added to timeline.`,
+          description: toastMessage,
         });
       }, 0);
 
@@ -261,7 +285,6 @@ export default function VidGeniusPage() {
     }
 
     const newClipId = `caption-clip-${Date.now()}`;
-    // Ensure each manual caption gets its own new track
     const captionTrackCount = tracks.filter(t => t.type === 'caption' && t.name.startsWith("Caption Track")).length;
     const targetTrackId = `track-caption-manual-${Date.now()}-${captionTrackCount + 1}`;
     const targetTrackName = `Caption Track ${captionTrackCount + 1}`;
@@ -272,8 +295,8 @@ export default function VidGeniusPage() {
       trackId: targetTrackId,
       name: `Caption: ${text.substring(0, 20)}${text.length > 20 ? '...' : ''}`,
       type: 'caption',
-      sourceStart: 0, // For captions, sourceStart is 0
-      sourceEnd: DEFAULT_CAPTION_DURATION, // sourceEnd is its duration
+      sourceStart: 0, 
+      sourceEnd: DEFAULT_CAPTION_DURATION, 
       timelineStart: globalCurrentTime,
       color: 'bg-yellow-500',
       text: text,
@@ -321,7 +344,6 @@ export default function VidGeniusPage() {
       const input: GenerateCaptionsInput = { videoDataUri: mediaFile.dataUri, language };
       const result = await generateCaptions(input);
 
-      // Create a unique track name for AI subtitles for this specific clip
       const aiCaptionTrackName = `AI Subtitles for ${selectedClip.name.substring(0,15)}`;
       const newTrackId = `track-caption-ai-${Date.now()}`;
 
@@ -332,7 +354,7 @@ export default function VidGeniusPage() {
         name: `AI Subtitles`,
         type: 'caption',
         sourceStart: 0,
-        sourceEnd: DEFAULT_CAPTION_DURATION, // Or perhaps a duration based on caption length? For now, default.
+        sourceEnd: DEFAULT_CAPTION_DURATION, 
         timelineStart: selectedClip.timelineStart,
         color: 'bg-teal-500',
         text: result.captions,
@@ -372,29 +394,26 @@ export default function VidGeniusPage() {
       const newTracks = prevTracks.map(track => {
         const filteredClips = track.clips.filter(clip => clip.id !== selectedClipId);
         if (filteredClips.length === 0 && track.clips.some(c => c.id === selectedClipId)) {
-          return null; // Mark track for removal if it becomes empty after deleting the selected clip
+          return null; 
         }
         return { ...track, clips: filteredClips };
-      }).filter(track => track !== null) as Track[]; // Remove null tracks
+      }).filter(track => track !== null) as Track[]; 
 
       // Renumber standard tracks (Video Track X, Audio Track X, Caption Track X)
-      const trackCounts: { [key: string]: number } = { video: 0, audio: 0, caption: 0 }; // For manual/generic tracks
-      let aiSubtitleBaseCount = 0; // Counter for uniquely naming AI subtitle tracks
-
+      const trackCounts: { [key: string]: number } = { video: 0, audio: 0, caption: 0 }; 
+      
       return newTracks.map(track => {
         let newName = track.name;
-        if (track.type === 'video' || track.type === 'audio') {
-            trackCounts[track.type]++;
-            newName = `${track.type.charAt(0).toUpperCase() + track.type.slice(1)} Track ${trackCounts[track.type]}`;
+        if (track.type === 'video' && track.name.startsWith("Video Track")) {
+            trackCounts.video++;
+            newName = `Video Track ${trackCounts.video}`;
+        } else if (track.type === 'audio' && track.name.startsWith("Audio Track")) {
+            trackCounts.audio++;
+            newName = `Audio Track ${trackCounts.audio}`;
         } else if (track.type === 'caption') {
             if (track.name.startsWith("AI Subtitles for")) {
-                 // Keep AI subtitle track names unique as they are, or re-evaluate if they also need renumbering.
-                 // For now, let's assume their original generated name is sufficiently unique.
-                 // If strict renumbering is needed:
-                 // aiSubtitleBaseCount++;
-                 // newName = `AI Subtitles ${aiSubtitleBaseCount}`;
-                 newName = track.name; // Keep original unique AI name
-            } else if (track.name.startsWith("Caption Track")) { // Only renumber manual "Caption Track X"
+                 newName = track.name; 
+            } else if (track.name.startsWith("Caption Track")) { 
                 trackCounts.caption++;
                 newName = `Caption Track ${trackCounts.caption}`;
             }
@@ -434,53 +453,45 @@ export default function VidGeniusPage() {
             let updatedEnd = newTimes.sourceEnd !== undefined ? newTimes.sourceEnd : clip.sourceEnd;
             let updatedTimelineStart = newTimes.timelineStart !== undefined ? newTimes.timelineStart : clip.timelineStart;
 
-            // Validate and adjust start/end times
             if (clip.type === 'caption') {
-              // For captions, sourceStart is usually 0, sourceEnd defines duration
-              updatedStart = Math.max(0, updatedStart); // Typically sourceStart will remain 0 for captions.
+              updatedStart = Math.max(0, updatedStart); 
               if (newTimes.sourceEnd !== undefined) {
-                 updatedEnd = Math.max(0.1, updatedEnd); // Caption must have some duration
+                 updatedEnd = Math.max(0.1, updatedEnd); 
               } else {
-                if (updatedStart >= clip.sourceEnd) { // If start time moves beyond end, adjust end.
+                if (updatedStart >= clip.sourceEnd) { 
                     updatedEnd = updatedStart + 0.1;
                 } else {
                     updatedEnd = clip.sourceEnd;
                 }
               }
-              // Ensure duration (sourceEnd - sourceStart) is positive
               if (updatedEnd <= updatedStart) updatedEnd = updatedStart + 0.1;
 
-            } else if (mediaFile) { // For video/audio
+            } else if (mediaFile) { 
               updatedStart = Math.max(0, updatedStart);
               updatedEnd = Math.min(mediaFile.duration, updatedEnd);
 
-              // Ensure start is before end and within media bounds
               if (updatedStart >= updatedEnd) {
-                // If only sourceStart is being changed, ensure it's less than current sourceEnd
                 if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) {
                   updatedStart = Math.min(updatedStart, clip.sourceEnd - 0.1);
                 }
-                // If only sourceEnd is being changed, ensure it's greater than current sourceStart
                 else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) {
                   updatedEnd = Math.max(updatedEnd, clip.sourceStart + 0.1);
                 }
-                // If both are changed or imply an invalid range, reset to a small valid range or keep original
                 else {
-                   // Attempt to maintain a small duration if times are problematic
                    updatedStart = Math.min(updatedStart, mediaFile.duration - 0.1);
                    updatedEnd = updatedStart + 0.1;
                 }
-                updatedEnd = Math.min(mediaFile.duration, updatedEnd); // Re-cap end time
-                updatedStart = Math.max(0, updatedStart); // Re-cap start time
+                updatedEnd = Math.min(mediaFile.duration, updatedEnd); 
+                updatedStart = Math.max(0, updatedStart); 
 
-                 if (updatedStart >= updatedEnd) { // Final check
+                 if (updatedStart >= updatedEnd) { 
                    setTimeout(() => {
                      toast({ title: "Invalid trim", description: "Clip start time must be before end time and within media bounds.", variant: "destructive"});
                    }, 0);
-                   return clip; // Return original clip if still invalid
+                   return clip; 
                  }
               }
-            } else { // No media file for non-caption clip (should not happen)
+            } else { 
               return clip;
             }
 
@@ -496,6 +507,66 @@ export default function VidGeniusPage() {
     );
   }, [mediaLibrary, toast]);
 
+  const handleAiEditClip = useCallback(async (promptText: string) => {
+    if (!selectedClipId) {
+      setTimeout(() => {
+        toast({ title: "No Clip Selected", description: "Please select a clip to edit with AI.", variant: "default" });
+      }, 0);
+      return;
+    }
+    const clipToEdit = tracks.flatMap(t => t.clips).find(c => c.id === selectedClipId);
+    if (!clipToEdit || clipToEdit.type === 'caption') {
+       setTimeout(() => {
+        toast({ title: "Invalid Clip", description: "AI editing is for video/audio clips.", variant: "default" });
+      }, 0);
+      return;
+    }
+    const mediaFile = mediaLibrary.find(mf => mf.id === clipToEdit.mediaFileId);
+    if (!mediaFile) {
+       setTimeout(() => {
+        toast({ title: "Media Not Found", description: "Source media for the clip is missing.", variant: "destructive" });
+      }, 0);
+      return;
+    }
+
+    try {
+      const input: EditVideoWithAIInput = {
+        videoDataUri: mediaFile.dataUri,
+        prompt: promptText,
+      };
+      const result: EditVideoWithAIOutput = await editVideoWithAI(input);
+
+      let changesMade = false;
+      const updates: { sourceStart?: number; sourceEnd?: number } = {};
+
+      if (result.newSourceStart !== undefined && result.newSourceStart !== clipToEdit.sourceStart) {
+        updates.sourceStart = result.newSourceStart;
+        changesMade = true;
+      }
+      if (result.newSourceEnd !== undefined && result.newSourceEnd !== clipToEdit.sourceEnd) {
+        updates.sourceEnd = result.newSourceEnd;
+        changesMade = true;
+      }
+      
+      if (changesMade) {
+        handleUpdateClipTimes(clipToEdit.id, updates);
+        setTimeout(() => {
+          toast({ title: "AI Edits Applied", description: `Clip "${clipToEdit.name}" updated based on AI suggestion.` });
+        }, 0);
+      } else {
+         setTimeout(() => {
+          toast({ title: "AI Suggestion", description: "AI processed the prompt, but no direct trim changes were suggested or applicable.", variant: "default" });
+        }, 0);
+      }
+    } catch (error) {
+      console.error("AI Editing Error:", error);
+      setTimeout(() => {
+        toast({ title: "AI Editing Failed", description: "Could not apply AI edits.", variant: "destructive" });
+      }, 0);
+    }
+  }, [selectedClipId, tracks, mediaLibrary, toast, handleUpdateClipTimes]);
+
+
   const handleExportVideo = useCallback(async () => {
     const exportData = {
       projectDuration,
@@ -505,8 +576,6 @@ export default function VidGeniusPage() {
         name: mf.name,
         type: mf.type,
         duration: mf.duration
-        // dataUri intentionally excluded for this request to keep payload smaller.
-        // Server would typically retrieve full media from storage based on ID or expect dataUris.
       })),
     };
 
@@ -518,7 +587,7 @@ export default function VidGeniusPage() {
     }, 0);
 
     try {
-      const response = await fetch('http://localhost:3001/api/export-video', { // Absolute URL for the Express server
+      const response = await fetch('http://localhost:3001/api/export-video', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -533,7 +602,7 @@ export default function VidGeniusPage() {
           setTimeout(() => {
             toast({
               title: "Export Request Sent",
-              description: result.message || "Server has received the video data. Further processing needed on server.",
+              description: result.message || "Server has received the video data.",
               duration: 7000,
             });
           }, 0);
@@ -549,7 +618,7 @@ export default function VidGeniusPage() {
     } catch (error) {
       console.error("Export Video Error:", error);
       let description = `Could not send data to server: ${error instanceof Error ? error.message : "Unknown error"}`;
-      if (error instanceof TypeError && error.message.toLowerCase().includes('failed to fetch')) {
+      if (error instanceof TypeError && (error.message.toLowerCase().includes('failed to fetch') || error.message.toLowerCase().includes('networkerror'))) {
         description = "Failed to connect to the export server. Please ensure the Node.js server (server.js) is running on port 3001 (e.g., using 'npm run server').";
       }
       setTimeout(() => {
@@ -557,7 +626,7 @@ export default function VidGeniusPage() {
           title: "Export Failed",
           description: description,
           variant: "destructive",
-          duration: 7000,
+          duration: 10000,
         });
       }, 0);
     }
@@ -611,6 +680,7 @@ export default function VidGeniusPage() {
         </SidebarInset>
         <AiEditorSidebar
           onGenerateSubtitles={handleGenerateSubtitles}
+          onAiEditClip={handleAiEditClip}
           selectedClip={selectedClipForControls}
           mediaLibrary={mediaLibrary}
           onUpdateClipTimes={handleUpdateClipTimes}
@@ -619,6 +689,3 @@ export default function VidGeniusPage() {
     </SidebarProvider>
   );
 }
-
-
-    

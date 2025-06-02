@@ -12,30 +12,31 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Bot, Send, Type, ScissorsIcon } from "lucide-react";
+import { Bot, Send, Type } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { editVideoWithAI, EditVideoWithAIInput, EditVideoWithAIOutput } from "@/ai/flows/edit-video-with-ai";
 import type { Clip, MediaFile } from "@/app/page";
 
 interface AiEditorSidebarProps {
-  onGenerateSubtitles: (language?: string) => Promise<any | null>; // Can return subtitles or null on error
+  onGenerateSubtitles: (language?: string) => Promise<any | null>;
+  onAiEditClip: (promptText: string) => Promise<void>; // New prop for AI editing
   selectedClip: Clip | null;
-  mediaLibrary: MediaFile[];
-  onUpdateClipTimes: (clipId: string, newTimes: { sourceStart?: number; sourceEnd?: number }) => void;
+  mediaLibrary: MediaFile[]; // Keep if needed for other AI features, or remove if only onAiEditClip uses it
+  onUpdateClipTimes: (clipId: string, newTimes: { sourceStart?: number; sourceEnd?: number }) => void; // Keep if other direct manipulations happen here
 }
 
 export default function AiEditorSidebar({ 
   onGenerateSubtitles, 
-  selectedClip, 
-  mediaLibrary,
-  onUpdateClipTimes
+  onAiEditClip,
+  selectedClip,
+  mediaLibrary, // Included for context, may or may not be directly used by all sidebar functions
+  onUpdateClipTimes // Included for context
 }: AiEditorSidebarProps) {
   const [prompt, setPrompt] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingAiEdit, setIsLoadingAiEdit] = useState(false);
   const [isGeneratingSubs, setIsGeneratingSubs] = useState(false);
   const { toast } = useToast();
 
-  const handleAiEditVideo = async () => {
+  const handleAiEditVideoClick = async () => {
     if (!prompt.trim()) {
       toast({
         title: "Prompt is empty",
@@ -52,8 +53,7 @@ export default function AiEditorSidebar({
       });
       return;
     }
-    const mediaFile = mediaLibrary.find(mf => mf.id === selectedClip.mediaFileId);
-    if (!mediaFile || selectedClip.type === 'caption') {
+     if (selectedClip.type === 'caption') {
        toast({
         title: "Invalid Clip Type",
         description: "AI editing is currently supported for video/audio clips only.",
@@ -62,54 +62,26 @@ export default function AiEditorSidebar({
       return;
     }
 
-
-    setIsLoading(true);
+    setIsLoadingAiEdit(true);
     toast({
       title: "AI Editing in Progress",
       description: "The AI is processing your video edit request...",
     });
 
     try {
-      const input: EditVideoWithAIInput = {
-        videoDataUri: mediaFile.dataUri,
-        prompt: prompt,
-      };
-      // const result = await editVideoWithAI(input);
-      // This is where you'd handle the 'result.editedVideoDataUri'
-      // For example, you might need to:
-      // 1. Add it as a new MediaFile to mediaLibrary
-      // 2. Update the selectedClip's mediaFileId to point to this new MediaFile
-      // 3. Or, if the AI can return trim times, update selectedClip.sourceStart/sourceEnd
-      
-      // Mocking AI response for now as direct video data replacement is complex
-      await new Promise(resolve => setTimeout(resolve, 3000)); 
-      console.log("AI Edit Video (Simulated) Input:", input);
-      
-      // Example: If AI could return new start/end times based on prompt
-      // This is a hypothetical AI capability for this flow.
-      // The current `editVideoWithAI` flow is designed to return a new video URI.
-      if (prompt.toLowerCase().includes("trim first 5 seconds")) {
-         onUpdateClipTimes(selectedClip.id, { sourceStart: selectedClip.sourceStart + 5 });
-         toast({
-            title: "AI Edits Applied (Trim Simulated)",
-            description: `Simulated trim for ${selectedClip.name}.`,
-          });
-      } else {
-        toast({
-          title: "AI Edits Processed (Simulated)",
-          description: "Your video has been processed based on the prompt (simulation). Further integration needed to apply complex edits.",
-        });
-      }
+      await onAiEditClip(prompt); // Call the new prop function
       setPrompt(""); 
     } catch (error) {
-      console.error("AI Video Editing Error:", error);
+      // Error handling is now primarily in onAiEditClip in page.tsx
+      // but you can add a generic fallback here if needed
+      console.error("AI Video Editing Error (Sidebar Fallback):", error);
       toast({
         title: "AI Video Editing Failed",
         description: "Something went wrong. Please try again.",
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      setIsLoadingAiEdit(false);
     }
   };
 
@@ -127,7 +99,7 @@ export default function AiEditorSidebar({
       title: "Generating Subtitles...",
       description: "AI is working on creating captions.",
     });
-    await onGenerateSubtitles(); // Call the passed-in function
+    await onGenerateSubtitles(); 
     setIsGeneratingSubs(false);
   };
 
@@ -149,7 +121,7 @@ export default function AiEditorSidebar({
           <Button 
             onClick={handleGenerateSubtitlesClick} 
             className="w-full bg-primary hover:bg-primary/90 text-primary-foreground" 
-            disabled={isGeneratingSubs || isLoading || !selectedClip || selectedClip.type !== 'video'}
+            disabled={isGeneratingSubs || isLoadingAiEdit || !selectedClip || selectedClip.type !== 'video'}
           >
             {isGeneratingSubs ? "Generating..." : "Generate Subtitles"}
             {!isGeneratingSubs && <Type className="ml-2 h-4 w-4" />}
@@ -166,15 +138,15 @@ export default function AiEditorSidebar({
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             className="min-h-[100px] focus:ring-accent"
-            disabled={isLoading || isGeneratingSubs}
+            disabled={isLoadingAiEdit || isGeneratingSubs}
           />
         </SidebarGroup>
 
       </SidebarContent>
       <SidebarFooter className="p-4 border-t">
-        <Button onClick={handleAiEditVideo} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground" disabled={isLoading || isGeneratingSubs || !selectedClip || selectedClip.type === 'caption'}>
-          {isLoading ? "Processing..." : "Apply Edits with AI"}
-          {!isLoading && <Send className="ml-2 h-4 w-4" />}
+        <Button onClick={handleAiEditVideoClick} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground" disabled={isLoadingAiEdit || isGeneratingSubs || !selectedClip || selectedClip.type === 'caption'}>
+          {isLoadingAiEdit ? "Processing..." : "Apply Edits with AI"}
+          {!isLoadingAiEdit && <Send className="ml-2 h-4 w-4" />}
         </Button>
       </SidebarFooter>
     </Sidebar>
