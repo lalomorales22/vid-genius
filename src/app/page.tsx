@@ -11,6 +11,9 @@ import AiEditorSidebar from "@/components/vidgenius/AiEditorSidebar";
 import TimelineControls from "@/components/vidgenius/TimelineControls";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useToast } from "@/hooks/use-toast";
+import { generateCaptions, GenerateCaptionsInput, GenerateCaptionsOutput } from "@/ai/flows/generate-captions";
+import { editVideoWithAI, EditVideoWithAIInput, EditVideoWithAIOutput } from "@/ai/flows/edit-video-with-ai";
+
 
 export interface MediaFile {
   id: string;
@@ -22,15 +25,15 @@ export interface MediaFile {
 
 export interface Clip {
   id: string;
-  mediaFileId: string;
+  mediaFileId: string; // For video/audio, points to MediaFile
   trackId: string;
   name: string;
   type: 'video' | 'audio' | 'caption';
-  sourceStart: number; // in seconds, within the original media file
-  sourceEnd: number;   // in seconds, within the original media file
+  sourceStart: number; // in seconds, within the original media file (if applicable)
+  sourceEnd: number;   // in seconds, within the original media file (if applicable)
   timelineStart: number; // in seconds, on the project timeline
   color: string;
-  text?: string;
+  text?: string; // For captions
 }
 
 export interface Track {
@@ -60,7 +63,14 @@ export default function VidGeniusPage() {
     let maxEndTime = 0;
     tracks.forEach(track => {
       track.clips.forEach(clip => {
-        const clipEndTime = clip.timelineStart + (clip.sourceEnd - clip.sourceStart);
+        let clipDuration = 0;
+        if (clip.type === 'caption') {
+          // Estimate caption duration, e.g., 5 seconds or based on text length
+          clipDuration = clip.text ? Math.max(3, clip.text.length / 15) : 5;
+        } else {
+          clipDuration = clip.sourceEnd - clip.sourceStart;
+        }
+        const clipEndTime = clip.timelineStart + clipDuration;
         if (clipEndTime > maxEndTime) {
           maxEndTime = clipEndTime;
         }
@@ -71,36 +81,52 @@ export default function VidGeniusPage() {
 
   const animationFrameLoop = useCallback(() => {
     const elapsedSinceLoopStart = (Date.now() - animationLoopStartTimeRef.current) / 1000;
-    const newCurrentTime = Math.min(elapsedSinceLoopStart, projectDuration);
+    const newCurrentTime = globalCurrentTime + elapsedSinceLoopStart; // Accumulate time based on when loop started
 
-    setGlobalCurrentTime(newCurrentTime);
-
-    if (newCurrentTime >= projectDuration) {
-      setIsGlobalPlaying(false);
-      if (requestAnimationFrameIdRef.current) {
-        cancelAnimationFrame(requestAnimationFrameIdRef.current);
-        requestAnimationFrameIdRef.current = null;
+    setGlobalCurrentTime(prevTime => {
+      const currentDelta = (Date.now() - animationLoopStartTimeRef.current) / 1000;
+      animationLoopStartTimeRef.current = Date.now(); // Reset start time for next frame
+      const nextTime = prevTime + currentDelta;
+      
+      if (nextTime >= projectDuration) {
+        setIsGlobalPlaying(false);
+        if (requestAnimationFrameIdRef.current) {
+          cancelAnimationFrame(requestAnimationFrameIdRef.current);
+          requestAnimationFrameIdRef.current = null;
+        }
+        return projectDuration;
       }
-      // Optionally reset time or keep at end: setGlobalCurrentTime(projectDuration);
-      return;
+      return nextTime;
+    });
+
+    if (globalCurrentTime < projectDuration && isGlobalPlaying) {
+       requestAnimationFrameIdRef.current = requestAnimationFrame(animationFrameLoop);
+    } else if (globalCurrentTime >= projectDuration && isGlobalPlaying) {
+        setIsGlobalPlaying(false); // Stop if it reaches the end
+        setGlobalCurrentTime(projectDuration);
+         if (requestAnimationFrameIdRef.current) {
+          cancelAnimationFrame(requestAnimationFrameIdRef.current);
+          requestAnimationFrameIdRef.current = null;
+        }
     }
-    requestAnimationFrameIdRef.current = requestAnimationFrame(animationFrameLoop);
-  }, [projectDuration]);
+  }, [projectDuration, isGlobalPlaying, globalCurrentTime]);
+
 
   const handleToggleGlobalPlayPause = useCallback(() => {
     setIsGlobalPlaying(prevIsPlaying => {
       const nowPlaying = !prevIsPlaying;
       if (nowPlaying) {
         let effectiveCurrentTime = globalCurrentTime;
-        if (globalCurrentTime >= projectDuration) {
+        if (globalCurrentTime >= projectDuration && projectDuration > 0) { // Ensure projectDuration is positive
           effectiveCurrentTime = 0;
           setGlobalCurrentTime(0);
         }
-        animationLoopStartTimeRef.current = Date.now() - effectiveCurrentTime * 1000;
+        animationLoopStartTimeRef.current = Date.now(); // Reset start time when play is initiated
+        
         if (requestAnimationFrameIdRef.current) {
           cancelAnimationFrame(requestAnimationFrameIdRef.current);
         }
-        animationFrameLoop();
+        requestAnimationFrameIdRef.current = requestAnimationFrame(animationFrameLoop);
       } else {
         if (requestAnimationFrameIdRef.current) {
           cancelAnimationFrame(requestAnimationFrameIdRef.current);
@@ -111,13 +137,14 @@ export default function VidGeniusPage() {
     });
   }, [globalCurrentTime, projectDuration, animationFrameLoop]);
 
+
   const handleGlobalSeek = useCallback((newTime: number) => {
     const newCappedTime = Math.max(0, Math.min(newTime, projectDuration));
     setGlobalCurrentTime(newCappedTime);
     if (isGlobalPlaying) {
-      animationLoopStartTimeRef.current = Date.now() - newCappedTime * 1000;
-      if (requestAnimationFrameIdRef.current) { // Ensure loop continues if it was playing
-         cancelAnimationFrame(requestAnimationFrameIdRef.current);
+      // Adjust the loop start time to maintain smooth playback from the new seek position
+      animationLoopStartTimeRef.current = Date.now(); 
+      if (!requestAnimationFrameIdRef.current) { // If not already playing, start the loop
          requestAnimationFrameIdRef.current = requestAnimationFrame(animationFrameLoop);
       }
     }
@@ -192,7 +219,7 @@ export default function VidGeniusPage() {
         type: trackType,
         sourceStart: 0,
         sourceEnd: newMediaFile.duration,
-        timelineStart: 0,
+        timelineStart: 0, // Default to start of timeline
         color: trackType === 'video' ? 'bg-blue-500' : (trackType === 'audio' ? 'bg-green-500' : 'bg-orange-500'),
       };
 
@@ -223,6 +250,78 @@ export default function VidGeniusPage() {
     }
   }, [tracks, toast]);
 
+  const handleGenerateSubtitles = useCallback(async (language: string = "en") => {
+    if (!selectedClipId) {
+      setTimeout(() => {
+        toast({ title: "No clip selected", description: "Please select a video clip to generate subtitles.", variant: "default" });
+      }, 0);
+      return null;
+    }
+
+    const selectedClip = tracks.flatMap(t => t.clips).find(c => c.id === selectedClipId);
+    if (!selectedClip || selectedClip.type !== 'video') {
+      setTimeout(() => {
+        toast({ title: "Invalid clip", description: "Please select a video clip.", variant: "default" });
+      }, 0);
+      return null;
+    }
+
+    const mediaFile = mediaLibrary.find(mf => mf.id === selectedClip.mediaFileId);
+    if (!mediaFile) {
+       setTimeout(() => {
+        toast({ title: "Media not found", description: "Source media for the clip is missing.", variant: "destructive" });
+      }, 0);
+      return null;
+    }
+    
+    try {
+      const input: GenerateCaptionsInput = { videoDataUri: mediaFile.dataUri, language };
+      const result = await generateCaptions(input);
+
+      const newCaptionClip: Clip = {
+        id: `caption-${Date.now()}`,
+        mediaFileId: '', // No direct media file for captions, text is embedded
+        trackId: '', // Will be assigned when adding to a new track
+        name: `Subtitles for ${selectedClip.name}`,
+        type: 'caption',
+        sourceStart: 0, // Not applicable for text
+        sourceEnd: 0,   // Not applicable for text
+        timelineStart: selectedClip.timelineStart, // Align with video clip start
+        color: 'bg-yellow-500',
+        text: result.captions,
+      };
+
+      // Add to a new caption track or an existing one
+      let captionTrack = tracks.find(t => t.type === 'caption' && t.name.includes("Caption Track")); // Simple find logic
+      if (captionTrack) {
+        newCaptionClip.trackId = captionTrack.id;
+        setTracks(prevTracks => prevTracks.map(t => 
+          t.id === captionTrack!.id ? { ...t, clips: [...t.clips, newCaptionClip] } : t
+        ));
+      } else {
+        const newTrackId = `track-caption-${Date.now()}`;
+        newCaptionClip.trackId = newTrackId;
+        const newTrack: Track = {
+          id: newTrackId,
+          name: `Caption Track 1`,
+          type: 'caption',
+          clips: [newCaptionClip],
+        };
+        setTracks(prevTracks => [...prevTracks, newTrack]);
+      }
+       setTimeout(() => {
+        toast({ title: "Subtitles Generated", description: `Captions added for ${selectedClip.name}.` });
+      }, 0);
+      return result;
+    } catch (error) {
+      console.error("Error generating subtitles:", error);
+       setTimeout(() => {
+        toast({ title: "Subtitle Generation Failed", description: "Could not generate subtitles.", variant: "destructive" });
+      }, 0);
+      return null;
+    }
+  }, [selectedClipId, tracks, mediaLibrary, toast]);
+
 
   const handleDeleteSelectedClip = useCallback(() => {
     if (!selectedClipId) {
@@ -236,11 +335,13 @@ export default function VidGeniusPage() {
       const newTracks = prevTracks.map(track => {
         const filteredClips = track.clips.filter(clip => clip.id !== selectedClipId);
         if (filteredClips.length === 0 && track.clips.some(c => c.id === selectedClipId)) {
+          // If all clips from a track are removed, remove the track itself
           return null;
         }
         return { ...track, clips: filteredClips };
-      }).filter(track => track !== null) as Track[];
+      }).filter(track => track !== null) as Track[]; // Type assertion to filter out nulls
 
+      // Re-number tracks if some are deleted
       const trackCounts: { [key: string]: number } = { video: 0, audio: 0, caption: 0 };
       return newTracks.map(track => {
         trackCounts[track.type]++;
@@ -277,33 +378,43 @@ export default function VidGeniusPage() {
         clips: track.clips.map(clip => {
           if (clip.id === clipId) {
             const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
-            if (!mediaFile) return clip;
+            // For caption clips, mediaFile might not exist or duration isn't relevant in the same way
+            if (!mediaFile && clip.type !== 'caption') return clip;
+
 
             let updatedStart = newTimes.sourceStart !== undefined ? newTimes.sourceStart : clip.sourceStart;
             let updatedEnd = newTimes.sourceEnd !== undefined ? newTimes.sourceEnd : clip.sourceEnd;
 
-            updatedStart = Math.max(0, updatedStart);
-            updatedEnd = Math.min(mediaFile.duration, updatedEnd);
-
-            if (updatedStart >= updatedEnd) {
-              if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) {
-                updatedStart = Math.min(updatedStart, clip.sourceEnd - 0.1);
-              } else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) {
-                updatedEnd = Math.max(updatedEnd, clip.sourceStart + 0.1);
-              } else {
-                 updatedStart = Math.min(updatedStart, mediaFile.duration - 0.1);
-                 updatedEnd = updatedStart + 0.1;
-              }
-              updatedEnd = Math.min(mediaFile.duration, updatedEnd);
+            // If it's a media clip, validate against media file duration
+            if (mediaFile && clip.type !== 'caption') {
               updatedStart = Math.max(0, updatedStart);
+              updatedEnd = Math.min(mediaFile.duration, updatedEnd);
 
-               if (updatedStart >= updatedEnd) {
-                 setTimeout(() => {
-                   toast({ title: "Invalid trim", description: "Clip start time must be before end time and within media bounds.", variant: "destructive"});
-                 }, 0);
-                 return clip;
-               }
+              if (updatedStart >= updatedEnd) {
+                // Attempt to fix invalid trim, ensuring minimum 0.1s duration
+                if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) { // Only start changed
+                  updatedStart = Math.min(updatedStart, clip.sourceEnd - 0.1);
+                } else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) { // Only end changed
+                  updatedEnd = Math.max(updatedEnd, clip.sourceStart + 0.1);
+                } else { // Both might have changed or are being set
+                   updatedStart = Math.min(updatedStart, mediaFile.duration - 0.1);
+                   updatedEnd = updatedStart + 0.1; // Ensure end is after start
+                }
+                // Final check to ensure within bounds
+                updatedEnd = Math.min(mediaFile.duration, updatedEnd);
+                updatedStart = Math.max(0, updatedStart);
+
+                 if (updatedStart >= updatedEnd) { // If still invalid, show toast and revert
+                   setTimeout(() => {
+                     toast({ title: "Invalid trim", description: "Clip start time must be before end time and within media bounds.", variant: "destructive"});
+                   }, 0);
+                   return clip; // Return original clip
+                 }
+              }
             }
+            // For captions, start/end times are more about placement, less about source media trimming.
+            // We might add different validation for captions later if needed.
+
             setTimeout(() => {
               toast({ title: "Clip Trimmed", description: `Clip ${clip.name} updated.`});
             }, 0);
@@ -359,11 +470,13 @@ export default function VidGeniusPage() {
             </main>
           </div>
         </SidebarInset>
-        <AiEditorSidebar />
+        <AiEditorSidebar
+          onGenerateSubtitles={handleGenerateSubtitles}
+          selectedClip={selectedClipForControls}
+          mediaLibrary={mediaLibrary}
+          onUpdateClipTimes={handleUpdateClipTimes}
+        />
       </div>
     </SidebarProvider>
   );
 }
-    
-
-    

@@ -3,7 +3,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { GripVertical, Film, Music2, Baseline } from "lucide-react";
+import { GripVertical, Film, Music2, Baseline, MessageSquareText } from "lucide-react";
 import React from "react";
 import type { Track, Clip } from "@/app/page"; 
 import { cn } from "@/lib/utils";
@@ -24,7 +24,7 @@ const getIconForTrackType = (type: 'video' | 'audio' | 'caption') => {
     case 'audio':
       return <Music2 className="h-5 w-5 text-green-500" />;
     case 'caption':
-      return <Baseline className="h-5 w-5 text-orange-500" />;
+      return <MessageSquareText className="h-5 w-5 text-yellow-600" />; // Updated icon
     default:
       return null;
   }
@@ -37,7 +37,7 @@ const getBgColorForTrackType = (type: 'video' | 'audio' | 'caption') => {
     case 'audio':
       return "bg-green-500/10";
     case 'caption':
-      return "bg-orange-500/10";
+      return "bg-yellow-500/10"; // Updated color consistency
     default:
       return "bg-muted/30";
   }
@@ -53,23 +53,34 @@ const TimelineTrackDisplay: React.FC<TimelineTrackDisplayProps> = ({ track, proj
       </div>
       <div className="flex-grow h-20 relative p-1 overflow-hidden">
         {track.clips.map((clip) => {
-          const clipDurationOnTimeline = clip.sourceEnd - clip.sourceStart;
+          let clipDurationOnTimeline;
+          if (clip.type === 'caption') {
+            // Estimate caption duration, e.g., based on text length or a default
+            clipDurationOnTimeline = clip.text ? Math.max(2, Math.min(15, clip.text.length / 10)) : 5; // Duration between 2-15s
+          } else {
+            clipDurationOnTimeline = clip.sourceEnd - clip.sourceStart;
+          }
+          
           const widthPercentage = projectDuration > 0 ? (clipDurationOnTimeline / projectDuration) * 100 : 0;
           const leftPercentage = projectDuration > 0 ? (clip.timelineStart / projectDuration) * 100 : 0;
           
+          const clipTitle = clip.type === 'caption' 
+            ? `${clip.name || 'Caption'}: "${clip.text?.substring(0,30)}..." (${clip.timelineStart.toFixed(1)}s)`
+            : `${clip.name} (${clip.timelineStart.toFixed(1)}s - ${(clip.timelineStart + clipDurationOnTimeline).toFixed(1)}s)`;
+
           return (
             <div
               key={clip.id}
               className={cn(
-                "absolute top-1/2 -translate-y-1/2 h-12 rounded-md shadow-sm flex items-center justify-center px-2 text-xs font-medium text-white overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary transition-all",
+                "absolute top-1/2 -translate-y-1/2 h-12 rounded-md shadow-sm flex items-center justify-start px-2 text-xs font-medium text-white overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary transition-all",
                 clip.color,
                 selectedClipId === clip.id && "ring-2 ring-offset-2 ring-accent"
               )}
               style={{
                 left: `${leftPercentage}%`,
-                width: `${Math.max(0.5, widthPercentage)}%`, // Ensure a minimum visible width
+                width: `${Math.max(0.5, widthPercentage)}%`, 
               }}
-              title={`${clip.name} (${clip.timelineStart.toFixed(1)}s - ${(clip.timelineStart + clipDurationOnTimeline).toFixed(1)}s)`}
+              title={clipTitle}
               onClick={() => onClipSelect(clip.id)}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClipSelect(clip.id); }}
               role="button"
@@ -77,7 +88,9 @@ const TimelineTrackDisplay: React.FC<TimelineTrackDisplayProps> = ({ track, proj
               aria-pressed={selectedClipId === clip.id}
               aria-label={`Select clip ${clip.name}`}
             >
-              <span className="truncate">{clip.name}</span>
+              <span className="truncate">
+                {clip.type === 'caption' ? (clip.text || 'Caption') : clip.name}
+              </span>
             </div>
           );
         })}
@@ -119,10 +132,9 @@ export default function Timeline({ tracks, projectDuration, selectedClipId, onCl
       <CardHeader className="pb-2 pt-4">
         <CardTitle className="text-lg font-headline">Timeline ({projectDuration.toFixed(0)}s)</CardTitle>
       </CardHeader>
-      <CardContent className="flex-grow p-0 overflow-hidden relative"> {/* Added relative for playhead */}
+      <CardContent className="flex-grow p-0 overflow-hidden relative"> 
         <ScrollArea className="h-full w-full">
-          <div className="min-w-[1200px] relative"> {/* Added relative for playhead container */}
-             {/* Playhead Line */}
+          <div className="min-w-[1200px] relative"> 
             <div 
               className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-10 pointer-events-none"
               style={{ left: `${playheadPosition}%` }}
@@ -151,5 +163,3 @@ export default function Timeline({ tracks, projectDuration, selectedClipId, onCl
     </Card>
   );
 }
-
-    
