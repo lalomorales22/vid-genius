@@ -5,14 +5,13 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import AppHeader from "@/components/vidgenius/AppHeader";
 import MediaImportArea from "@/components/vidgenius/MediaImportArea";
 import Toolbox from "@/components/vidgenius/Toolbox";
-import VideoPreview from "@/components/vidgenius/VideoPreview";
+import VideoPreview, { type PreviewableItem } from "@/components/vidgenius/VideoPreview";
 import Timeline from "@/components/vidgenius/Timeline";
 import AiEditorSidebar from "@/components/vidgenius/AiEditorSidebar";
 import TimelineControls from "@/components/vidgenius/TimelineControls";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useToast } from "@/hooks/use-toast";
 
-// Represents an uploaded source file
 export interface MediaFile {
   id: string;
   name: string;
@@ -21,29 +20,27 @@ export interface MediaFile {
   duration: number; // in seconds
 }
 
-// Represents a clip instance on the timeline, derived from a MediaFile
 export interface Clip {
   id: string;
-  mediaFileId: string; // ID of the source MediaFile
+  mediaFileId: string;
   trackId: string;
   name: string;
   type: 'video' | 'audio' | 'caption';
-  sourceStart: number; // Start time within the original mediaFile (for trimming, initially 0)
-  sourceEnd: number;   // End time within the original mediaFile (for trimming, initially mediaFile.duration)
-  timelineStart: number; // Start time on the main project timeline (initially 0 for new tracks)
+  sourceStart: number; 
+  sourceEnd: number;   
+  timelineStart: number;
   color: string;
-  text?: string; // For caption clips
+  text?: string;
 }
 
-// Represents a track on the timeline
 export interface Track {
   id: string;
-  name: string; // e.g., "Video Track 1", "Audio Track 1"
+  name: string;
   type: 'video' | 'audio' | 'caption';
   clips: Clip[];
 }
 
-const DEFAULT_PROJECT_DURATION = 60; // 60 seconds
+const DEFAULT_PROJECT_DURATION = 60;
 
 export default function VidGeniusPage() {
   const [mediaLibrary, setMediaLibrary] = useState<MediaFile[]>([]);
@@ -82,11 +79,13 @@ export default function VidGeniusPage() {
       mediaElement.preload = 'metadata';
       mediaElement.onloadedmetadata = () => {
         resolve(mediaElement.duration);
-        mediaElement.remove(); // Clean up element
+        URL.revokeObjectURL(objectUrl); // Revoke here after duration is read
+        mediaElement.remove();
       };
       mediaElement.onerror = () => {
-        resolve(0); // Resolve with 0 if there's an error loading metadata
-        mediaElement.remove(); // Clean up element
+        resolve(0);
+        URL.revokeObjectURL(objectUrl); // Also revoke on error
+        mediaElement.remove();
         console.error("Error loading media metadata for duration check");
       }
       mediaElement.src = objectUrl;
@@ -96,9 +95,9 @@ export default function VidGeniusPage() {
   const addMediaFileToLibraryAndTimeline = useCallback(async (file: File) => {
     try {
       const dataUri = await readFileAsDataURL(file);
-      const objectUrl = URL.createObjectURL(file);
-      const duration = await getMediaDuration(file, objectUrl);
-      URL.revokeObjectURL(objectUrl);
+      const objectUrlForDuration = URL.createObjectURL(file); // Create new URL for duration check
+      const duration = await getMediaDuration(file, objectUrlForDuration);
+      // URL.revokeObjectURL(objectUrlForDuration) is handled inside getMediaDuration
 
       if (duration === 0 && (file.type.startsWith('video/') || file.type.startsWith('audio/'))) {
         toast({
@@ -108,7 +107,6 @@ export default function VidGeniusPage() {
         });
         return;
       }
-
 
       const newMediaFile: MediaFile = {
         id: `${file.name}-${Date.now()}`,
@@ -120,7 +118,7 @@ export default function VidGeniusPage() {
 
       setMediaLibrary((prevLibrary) => [...prevLibrary, newMediaFile]);
 
-      const trackType = file.type.startsWith('video/') ? 'video' : 'audio';
+      const trackType = file.type.startsWith('video/') ? 'video' : (file.type.startsWith('audio/') ? 'audio' : 'caption');
       const existingTracksOfType = tracks.filter(t => t.type === trackType);
       const newTrackName = `${trackType.charAt(0).toUpperCase() + trackType.slice(1)} Track ${existingTracksOfType.length + 1}`;
       const newTrackId = `track-${trackType}-${Date.now()}`;
@@ -133,8 +131,8 @@ export default function VidGeniusPage() {
         type: trackType,
         sourceStart: 0,
         sourceEnd: newMediaFile.duration,
-        timelineStart: 0, // New clips on new tracks start at 0
-        color: trackType === 'video' ? 'bg-blue-500' : 'bg-green-500',
+        timelineStart: 0,
+        color: trackType === 'video' ? 'bg-blue-500' : (trackType === 'audio' ? 'bg-green-500' : 'bg-orange-500'),
       };
 
       const newTrack: Track = {
@@ -163,21 +161,19 @@ export default function VidGeniusPage() {
 
   const handleDeleteSelectedClip = useCallback(() => {
     if (!selectedClipId) {
-      toast({ title: "No clip selected", description: "Please select a clip to delete.", variant: "destructive" });
+      toast({ title: "No clip selected", description: "Please select a clip to delete.", variant: "default" });
       return;
     }
 
     setTracks(prevTracks => {
       const newTracks = prevTracks.map(track => {
         const filteredClips = track.clips.filter(clip => clip.id !== selectedClipId);
-        // If all clips are removed from a track, remove the track itself
         if (filteredClips.length === 0 && track.clips.some(c => c.id === selectedClipId)) {
           return null; 
         }
         return { ...track, clips: filteredClips };
-      }).filter(track => track !== null) as Track[]; // Filter out null tracks
+      }).filter(track => track !== null) as Track[];
       
-      // If a track was removed, re-index subsequent tracks of the same type
       const trackCounts: { [key: string]: number } = { video: 0, audio: 0, caption: 0 };
       return newTracks.map(track => {
         trackCounts[track.type]++;
@@ -193,39 +189,99 @@ export default function VidGeniusPage() {
   }, [selectedClipId, toast]);
 
   const handleSelectClip = useCallback((clipId: string) => {
-    setSelectedClipId(prevId => (prevId === clipId ? null : clipId)); // Toggle selection
+    setSelectedClipId(prevId => (prevId === clipId ? null : clipId));
   }, []);
   
-  const previewMedia = useMemo(() => {
+  const previewableItem = useMemo<PreviewableItem | null>(() => {
     if (selectedClipId) {
       for (const track of tracks) {
         const clip = track.clips.find(c => c.id === selectedClipId);
         if (clip) {
-          return mediaLibrary.find(mf => mf.id === clip.mediaFileId) || null;
+          const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
+          if (mediaFile) {
+            return { mediaFile, clip };
+          }
         }
       }
     }
-    // Fallback: find the first video media file in the library if no clip is selected
-    // Or the first clip of the first video track
+    // Fallback: find the first video media file's first clip
     const firstVideoTrack = tracks.find(t => t.type === 'video');
     if (firstVideoTrack && firstVideoTrack.clips.length > 0) {
-      return mediaLibrary.find(mf => mf.id === firstVideoTrack.clips[0].mediaFileId) || null;
+      const firstClip = firstVideoTrack.clips[0];
+      const mediaFile = mediaLibrary.find(mf => mf.id === firstClip.mediaFileId);
+      if (mediaFile) {
+        return { mediaFile, clip: firstClip };
+      }
     }
-    return mediaLibrary.find(mf => mf.type.startsWith('video/')) || null;
+    return null;
   }, [selectedClipId, tracks, mediaLibrary]);
 
+  const handleUpdateClipTimes = useCallback((clipId: string, newTimes: { sourceStart?: number; sourceEnd?: number }) => {
+    setTracks(prevTracks => 
+      prevTracks.map(track => ({
+        ...track,
+        clips: track.clips.map(clip => {
+          if (clip.id === clipId) {
+            const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
+            if (!mediaFile) return clip;
+
+            let updatedStart = newTimes.sourceStart !== undefined ? newTimes.sourceStart : clip.sourceStart;
+            let updatedEnd = newTimes.sourceEnd !== undefined ? newTimes.sourceEnd : clip.sourceEnd;
+
+            updatedStart = Math.max(0, updatedStart);
+            updatedEnd = Math.min(mediaFile.duration, updatedEnd);
+            
+            if (updatedStart >= updatedEnd) {
+              // If start becomes greater or equal to end, try to keep a minimal duration or revert one of them
+              if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) { // User changed start
+                updatedStart = Math.min(updatedStart, clip.sourceEnd - 0.1); // Ensure start is less than original end
+              } else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) { // User changed end
+                updatedEnd = Math.max(updatedEnd, clip.sourceStart + 0.1); // Ensure end is greater than original start
+              } else { // Both changed or invalid state
+                 updatedStart = Math.min(updatedStart, mediaFile.duration - 0.1);
+                 updatedEnd = updatedStart + 0.1; // Force minimal duration if both make it invalid
+              }
+              updatedEnd = Math.min(mediaFile.duration, updatedEnd);
+              updatedStart = Math.max(0, updatedStart);
+
+               if (updatedStart >= updatedEnd) { // Final safety net
+                 toast({ title: "Invalid trim", description: "Clip start time must be before end time and within media bounds.", variant: "destructive"});
+                 return clip; // Revert to original clip if still invalid
+               }
+
+            }
+            toast({ title: "Clip Trimmed", description: `Clip ${clip.name} updated.`});
+            return { ...clip, sourceStart: updatedStart, sourceEnd: updatedEnd };
+          }
+          return clip;
+        })
+      }))
+    );
+  }, [mediaLibrary, toast]);
+
+  const selectedClipForControls = useMemo(() => {
+    if (!selectedClipId) return null;
+    for (const track of tracks) {
+      const clip = track.clips.find(c => c.id === selectedClipId);
+      if (clip) return clip;
+    }
+    return null;
+  }, [selectedClipId, tracks]);
 
   return (
     <SidebarProvider defaultOpen={true}>
       <div className="flex h-screen bg-background text-foreground overflow-hidden">
          <SidebarInset>
-          <div className="flex flex-col h-full overflow-auto">
+          <div className="flex flex-col h-full overflow-auto"> {/* Added overflow-auto here for main content area */}
             <AppHeader />
-            <main className="flex-1 p-4 lg:p-6 space-y-4 overflow-auto"> {/* Added overflow-auto here */}
+            <main className="flex-1 p-4 lg:p-6 space-y-4 overflow-y-auto"> 
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
                 <div className="xl:col-span-2 space-y-4">
-                  <VideoPreview previewMedia={previewMedia} />
-                  <TimelineControls />
+                  <VideoPreview previewableItem={previewableItem} />
+                  <TimelineControls 
+                    selectedClip={selectedClipForControls}
+                    onUpdateClipTimes={handleUpdateClipTimes}
+                  />
                 </div>
                 <div className="xl:col-span-1 space-y-4">
                   <MediaImportArea onFileUpload={addMediaFileToLibraryAndTimeline} />
@@ -251,3 +307,5 @@ export default function VidGeniusPage() {
     </SidebarProvider>
   );
 }
+
+    
