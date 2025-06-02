@@ -1,5 +1,6 @@
 
 # VidGenius - AI Powered Video Editor
+<img width="1002" alt="Screenshot 2025-06-02 at 1 25 50 AM" src="https://github.com/user-attachments/assets/efdcd203-d2ef-44bd-8c62-53bb70f984e3" />
 
 VidGenius is a web-based video editor that leverages the power of AI to simplify and enhance the video editing process. Built with a modern tech stack including Next.js, React, ShadCN UI, Tailwind CSS, and Genkit for AI functionalities, VidGenius aims to provide an intuitive interface for both basic and AI-assisted video editing tasks.
 
