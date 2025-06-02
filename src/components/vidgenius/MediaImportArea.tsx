@@ -5,18 +5,50 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { UploadCloud } from "lucide-react";
 import React from "react";
+import { useToast } from "@/hooks/use-toast";
 
-export default function MediaImportArea() {
-  // Basic handler for file input change
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      // Process files
-      console.log("Files selected:", event.target.files);
+interface MediaImportAreaProps {
+  onFileUpload: (file: File) => void;
+}
+
+export default function MediaImportArea({ onFileUpload }: MediaImportAreaProps) {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
+
+  const processFiles = (files: FileList | null) => {
+    if (files) {
+      Array.from(files).forEach(file => {
+        if (file.type.startsWith("video/") || file.type.startsWith("audio/")) {
+          onFileUpload(file);
+        } else {
+          toast({
+            title: "Unsupported File Type",
+            description: `File "${file.name}" is not a supported video or audio format.`,
+            variant: "destructive",
+          });
+        }
+      });
     }
   };
 
-  // Input ref for triggering file dialog
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    processFiles(event.target.files);
+    // Reset file input to allow uploading the same file again
+    if (event.target) {
+      event.target.value = "";
+    }
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    processFiles(event.dataTransfer.files);
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
 
   const handleAreaClick = () => {
     fileInputRef.current?.click();
@@ -31,14 +63,14 @@ export default function MediaImportArea() {
         <div
           className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-border rounded-lg cursor-pointer hover:border-primary transition-colors"
           onClick={handleAreaClick}
-          onDrop={(e) => { e.preventDefault(); console.log("Files dropped:", e.dataTransfer.files);}}
-          onDragOver={(e) => e.preventDefault()}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
         >
           <UploadCloud className="w-12 h-12 text-muted-foreground mb-2" />
           <p className="text-sm text-muted-foreground mb-2">
-            Drag & drop files here
+            Drag & drop video/audio files here
           </p>
-          <Button variant="ghost" size="sm" className="text-primary hover:text-primary/90">
+          <Button variant="ghost" size="sm" className="text-primary hover:text-primary/90 pointer-events-none">
             Or click to upload
           </Button>
           <input
@@ -47,11 +79,11 @@ export default function MediaImportArea() {
             multiple
             className="hidden"
             onChange={handleFileChange}
-            accept="video/*,audio/*,image/*"
+            accept="video/*,audio/*"
           />
         </div>
         <p className="mt-2 text-xs text-muted-foreground text-center">
-          Supports video, audio, and image files.
+          Supports video and audio files.
         </p>
       </CardContent>
     </Card>
