@@ -6,15 +6,17 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Music } from "lucide-react";
-import type { MediaFile, Clip } from "@/app/page";
-
-export interface PreviewableItem {
-  mediaFile: MediaFile;
-  clip: Clip;
-}
+import type { MediaFile, Clip, Track } from "@/app/page";
+import { cn } from "@/lib/utils";
 
 interface VideoPreviewProps {
-  previewableItem: PreviewableItem | null;
+  tracks: Track[];
+  mediaLibrary: MediaFile[];
+  globalCurrentTime: number;
+  isGlobalPlaying: boolean;
+  projectDuration: number;
+  onTogglePlayPause: () => void;
+  onSeek: (time: number) => void;
 }
 
 const formatTime = (timeInSeconds: number): string => {
@@ -24,175 +26,128 @@ const formatTime = (timeInSeconds: number): string => {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
-export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
-  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0); // Relative to clip start
-  const [clipDuration, setClipDuration] = useState(0);
+export default function VideoPreview({
+  tracks,
+  mediaLibrary,
+  globalCurrentTime,
+  isGlobalPlaying,
+  projectDuration,
+  onTogglePlayPause,
+  onSeek,
+}: VideoPreviewProps) {
+  const mediaElementRefs = useRef<Record<string, HTMLVideoElement | HTMLAudioElement>>({});
   const [isMuted, setIsMuted] = useState(false);
-  const [mediaType, setMediaType] = useState<'video' | 'audio' | null>(null);
+  const [primaryVideoClipId, setPrimaryVideoClipId] = useState<string | null>(null);
+  const [primaryVideoMediaFile, setPrimaryVideoMediaFile] = useState<MediaFile | null>(null);
 
+
+  // Determine primary video clip for display
   useEffect(() => {
-    if (previewableItem) {
-      const newMediaType = previewableItem.mediaFile.type.startsWith('video/') ? 'video' : 'audio';
-      setMediaType(newMediaType);
-    } else {
-      setMediaType(null);
-      // Reset states when no item is selected
-      setIsPlaying(false);
-      setCurrentTime(0);
-      setClipDuration(0);
-      if (mediaRef.current) {
-        mediaRef.current.removeAttribute('src');
-        mediaRef.current.load(); // Important to reset the media element
-      }
-    }
-  }, [previewableItem]);
+    let newPrimaryClipId: string | null = null;
+    let newPrimaryMediaFile: MediaFile | null = null;
 
-  useEffect(() => {
-    const mediaElement = mediaRef.current;
-
-    if (!previewableItem || !mediaElement) {
-      return;
-    }
-
-    const { mediaFile, clip } = previewableItem;
-
-    const handleLoadedMetadata = () => {
-      if (mediaRef.current) { // Check ref again inside async handler
-        mediaRef.current.currentTime = clip.sourceStart;
-        setClipDuration(clip.sourceEnd - clip.sourceStart);
-        setCurrentTime(0); // Reset current time relative to clip
-        setIsPlaying(false); // Ensure it starts paused
-         if (mediaRef.current.muted !== isMuted) { // Sync mute state
-          mediaRef.current.muted = isMuted;
+    for (const track of tracks) {
+      if (track.type === 'video') {
+        for (const clip of track.clips) {
+          const clipEffectiveDuration = clip.sourceEnd - clip.sourceStart;
+          const clipIsActive = globalCurrentTime >= clip.timelineStart && globalCurrentTime < clip.timelineStart + clipEffectiveDuration;
+          if (clipIsActive) {
+            newPrimaryClipId = clip.id;
+            const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
+            if (mediaFile) newPrimaryMediaFile = mediaFile;
+            break;
+          }
         }
       }
-    };
-
-    const handleError = () => {
-      console.error("Error loading media for preview:", mediaFile.name);
-      setClipDuration(0);
-      setCurrentTime(0);
-      setIsPlaying(false);
-    };
-
-    const handleTimeUpdate = () => {
-      if (!mediaRef.current || !previewableItem) return; // Guard with previewableItem
-      const currentMediaTime = mediaRef.current.currentTime;
-      const { clip: currentClip } = previewableItem; // Use currentClip from item
-
-      if (currentMediaTime >= currentClip.sourceEnd) {
-        mediaRef.current.pause();
-        setIsPlaying(false);
-        setCurrentTime(currentClip.sourceEnd - currentClip.sourceStart);
-      } else if (currentMediaTime < currentClip.sourceStart && !mediaRef.current.seeking) {
-        // This case should ideally be prevented by seek logic, but as a fallback:
-        mediaRef.current.currentTime = currentClip.sourceStart;
-        setCurrentTime(0);
-      } else {
-        setCurrentTime(currentMediaTime - currentClip.sourceStart);
-      }
-    };
-
-    const handlePlay = () => setIsPlaying(true);
-    const handlePause = () => setIsPlaying(false);
-    
-    // This handles when the media natively ends, ensure it respects clip boundaries
-    const handleEnded = () => {
-      setIsPlaying(false);
-      if (mediaRef.current && previewableItem) {
-        // Set current time to the end of the clip segment
-        setCurrentTime(previewableItem.clip.sourceEnd - previewableItem.clip.sourceStart);
-        // Optionally, seek media element to clip.sourceEnd if needed
-        // mediaRef.current.currentTime = previewableItem.clip.sourceEnd;
-      }
-    };
-    
-    // Detach previous listeners before attaching new ones if mediaElement itself is persistent
-    // However, since <video>/<audio> tag might change, direct add/remove is safer per item change.
-    
-    mediaElement.src = mediaFile.dataUri;
-    
-    mediaElement.addEventListener('loadedmetadata', handleLoadedMetadata);
-    mediaElement.addEventListener('error', handleError);
-    mediaElement.addEventListener('timeupdate', handleTimeUpdate);
-    mediaElement.addEventListener('play', handlePlay);
-    mediaElement.addEventListener('pause', handlePause);
-    mediaElement.addEventListener('ended', handleEnded);
-
-    mediaElement.load(); // Start loading the new source
-
-    return () => {
-      mediaElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      mediaElement.removeEventListener('error', handleError);
-      mediaElement.removeEventListener('timeupdate', handleTimeUpdate);
-      mediaElement.removeEventListener('play', handlePlay);
-      mediaElement.removeEventListener('pause', handlePause);
-      mediaElement.removeEventListener('ended', handleEnded);
-      // No need to remove src here as the new item will set its own or it will be cleared if item is null
-    };
-  }, [previewableItem, mediaType, isMuted]); // Add mediaType and isMuted to ensure effect runs if those cause changes affecting media
-
-  const togglePlayPause = () => {
-    const media = mediaRef.current;
-    if (!media || !previewableItem) return;
-    const { clip } = previewableItem;
-
-    if (isPlaying) {
-      media.pause();
-    } else {
-      // Ensure media.currentTime is within the clip's bounds before playing
-      if (media.currentTime < clip.sourceStart || media.currentTime >= clip.sourceEnd) {
-         media.currentTime = clip.sourceStart;
-         setCurrentTime(0); // Reflect this change in UI
-      }
-      media.play().catch(error => {
-        console.error("Error playing media:", error);
-        setIsPlaying(false); // Ensure state consistency on error
-      });
+      if (newPrimaryClipId) break;
     }
-  };
+    setPrimaryVideoClipId(newPrimaryClipId);
+    setPrimaryVideoMediaFile(newPrimaryMediaFile);
+  }, [globalCurrentTime, tracks, mediaLibrary]);
 
-  const handleSeek = (timeWithinClip: number) => {
-    const media = mediaRef.current;
-    if (!media || !previewableItem) return;
-    const { clip } = previewableItem;
-    // Ensure seek time is within 0 and clip duration
-    const newTimeInClip = Math.max(0, Math.min(timeWithinClip, clip.sourceEnd - clip.sourceStart));
-    const newMediaTime = clip.sourceStart + newTimeInClip;
-    
-    media.currentTime = newMediaTime;
-    setCurrentTime(newTimeInClip);
-  };
+  // Synchronize all media elements with global playback state
+  useEffect(() => {
+    Object.values(mediaElementRefs.current).forEach(mediaEl => {
+      if (mediaEl) {
+         mediaEl.muted = isMuted;
+         // For non-primary videos, ensure they are also muted or handled according to design
+         const clipId = Object.keys(mediaElementRefs.current).find(id => mediaElementRefs.current[id] === mediaEl);
+         if (mediaEl instanceof HTMLVideoElement && clipId !== primaryVideoClipId) {
+            mediaEl.muted = true; // Mute non-primary videos
+         }
+      }
+    });
+  }, [isMuted, primaryVideoClipId]);
+
+
+  useEffect(() => {
+    tracks.forEach(track => {
+      track.clips.forEach(clip => {
+        const mediaEl = mediaElementRefs.current[clip.id];
+        if (!mediaEl) return;
+
+        const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
+        if (!mediaFile) return;
+        
+        // Ensure src is set if it hasn't been or has changed
+        if (mediaEl.currentSrc !== mediaFile.dataUri && mediaEl.src !== mediaFile.dataUri ) {
+             mediaEl.src = mediaFile.dataUri;
+             mediaEl.load(); // Important to re-load if src changes
+        }
+        
+        const clipEffectiveDuration = clip.sourceEnd - clip.sourceStart;
+        const clipIsActive = globalCurrentTime >= clip.timelineStart &&
+                             globalCurrentTime < clip.timelineStart + clipEffectiveDuration;
+
+        if (clipIsActive) {
+          const timeWithinMediaSource = clip.sourceStart + (globalCurrentTime - clip.timelineStart);
+          
+          if (mediaEl.readyState >= 2 && Math.abs(mediaEl.currentTime - timeWithinMediaSource) > 0.25 && !mediaEl.seeking) {
+            mediaEl.currentTime = timeWithinMediaSource;
+          }
+
+          if (isGlobalPlaying && mediaEl.paused && mediaEl.readyState >= 2) {
+            mediaEl.play().catch(e => console.error(`Error playing clip ${clip.id}:`, e));
+          } else if (!isGlobalPlaying && !mediaEl.paused) {
+            mediaEl.pause();
+          }
+        } else {
+          if (!mediaEl.paused) {
+            mediaEl.pause();
+          }
+           // Optionally reset currentTime for non-active clips for cleaner seeking later
+           if (mediaEl.readyState >=2 && mediaEl.currentTime !== clip.sourceStart) {
+             // mediaEl.currentTime = clip.sourceStart;
+           }
+        }
+      });
+    });
+  }, [globalCurrentTime, isGlobalPlaying, tracks, mediaLibrary, primaryVideoClipId]);
+
 
   const handleSkip = (amount: number) => {
-    if (!previewableItem || clipDuration <= 0) return;
-    const newClipTime = Math.max(0, Math.min(clipDuration, currentTime + amount));
-    handleSeek(newClipTime);
+    if (projectDuration <= 0) return;
+    const newTime = Math.max(0, Math.min(projectDuration, globalCurrentTime + amount));
+    onSeek(newTime);
   };
 
-  const toggleMute = () => {
-    const media = mediaRef.current;
-    if (media) {
-      media.muted = !media.muted;
-      setIsMuted(media.muted);
-    }
-  };
+  const toggleMute = () => setIsMuted(prev => !prev);
 
   const handleProgressClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!previewableItem || clipDuration <= 0) return;
+    if (projectDuration <= 0) return;
     const progressRail = event.currentTarget;
     const clickPosition = event.nativeEvent.offsetX;
     const railWidth = progressRail.offsetWidth;
-    const seekTimeInClip = (clickPosition / railWidth) * clipDuration;
-    handleSeek(seekTimeInClip);
+    const seekTime = (clickPosition / railWidth) * projectDuration;
+    onSeek(seekTime);
   };
 
   const toggleFullScreen = () => {
-    const media = mediaRef.current;
-    if (media instanceof HTMLVideoElement && media.requestFullscreen) {
-      media.requestFullscreen().catch(err => console.error("Error entering fullscreen:", err));
+    if (primaryVideoClipId) {
+      const primaryVideoEl = mediaElementRefs.current[primaryVideoClipId];
+      if (primaryVideoEl instanceof HTMLVideoElement && primaryVideoEl.requestFullscreen) {
+        primaryVideoEl.requestFullscreen().catch(err => console.error("Error entering fullscreen:", err));
+      }
     }
   };
   
@@ -200,31 +155,42 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
     <Card className="shadow-md overflow-hidden">
       <CardContent className="p-0">
         <div className="aspect-video bg-muted flex items-center justify-center relative group/videoplayer">
-          {mediaType === 'video' && previewableItem && (
-            <video
-              ref={mediaRef as React.Ref<HTMLVideoElement>}
-              className="w-full h-full object-contain"
-              onClick={togglePlayPause}
-              onDoubleClick={toggleFullScreen}
-              playsInline
-              muted={isMuted} // Controlled mute
-            />
+          {/* Render all media elements, but only primary video is visible */}
+          {tracks.flatMap(track => 
+            track.clips.map(clip => {
+              const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
+              if (!mediaFile) return null;
+
+              if (clip.type === 'video') {
+                return (
+                  <video
+                    key={clip.id}
+                    ref={el => { if (el) mediaElementRefs.current[clip.id] = el; else delete mediaElementRefs.current[clip.id]; }}
+                    className={cn("w-full h-full object-contain absolute top-0 left-0", {
+                      "visible": clip.id === primaryVideoClipId,
+                      "invisible": clip.id !== primaryVideoClipId,
+                    })}
+                    playsInline
+                    onClick={onTogglePlayPause}
+                    onDoubleClick={toggleFullScreen}
+                    muted={isMuted || clip.id !== primaryVideoClipId} // Mute non-primary videos
+                  />
+                );
+              } else if (clip.type === 'audio') {
+                return (
+                  <audio
+                    key={clip.id}
+                    ref={el => { if (el) mediaElementRefs.current[clip.id] = el; else delete mediaElementRefs.current[clip.id]; }}
+                    playsInline
+                    muted={isMuted}
+                  />
+                );
+              }
+              return null;
+            })
           )}
-          {mediaType === 'audio' && previewableItem && (
-            <>
-              <audio 
-                ref={mediaRef as React.Ref<HTMLAudioElement>} 
-                playsInline 
-                muted={isMuted} // Controlled mute
-              />
-              <div className="flex flex-col items-center text-muted-foreground p-4 pointer-events-none">
-                <Music className="w-24 h-24 mb-4" />
-                <p className="text-lg font-semibold">{previewableItem.mediaFile.name}</p>
-                <p className="text-sm">Audio track</p>
-              </div>
-            </>
-          )}
-          {(!previewableItem) && ( // Simpler condition: if no item, show placeholder
+
+          {!primaryVideoClipId && (
             <Image
               src="https://placehold.co/1280x720.png"
               alt="Media preview placeholder"
@@ -234,16 +200,23 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
               priority
             />
           )}
-          {previewableItem && !isPlaying && (
+          
+          {primaryVideoClipId && !isGlobalPlaying && (
              <div 
                 className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover/videoplayer:opacity-100 transition-opacity duration-200 cursor-pointer"
-                onClick={togglePlayPause}
+                onClick={onTogglePlayPause}
                 role="button"
-                aria-label={isPlaying ? "Pause" : "Play"}
+                aria-label={isGlobalPlaying ? "Pause" : "Play"}
              >
                 <Play className="h-16 w-16 text-white opacity-80 hover:opacity-100 transition-opacity" />
             </div>
            )}
+             {primaryVideoClipId === null && tracks.some(t => t.type === 'audio' && t.clips.length > 0) && (
+                 <div className="flex flex-col items-center text-muted-foreground p-4 pointer-events-none">
+                     <Music className="w-24 h-24 mb-4" />
+                     <p className="text-lg font-semibold">Audio Playback</p>
+                 </div>
+             )}
         </div>
 
         <div className="p-3 bg-card border-t space-y-2">
@@ -252,13 +225,13 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
             onClick={handleProgressClick}
             role="slider"
             aria-label="Media progress"
-            aria-valuenow={currentTime}
+            aria-valuenow={globalCurrentTime}
             aria-valuemin={0}
-            aria-valuemax={clipDuration}
+            aria-valuemax={projectDuration}
           >
             <div 
               className="h-full bg-primary rounded-full relative group-hover/progress:bg-accent transition-colors"
-              style={{ width: clipDuration > 0 ? `${(currentTime / clipDuration) * 100}%` : '0%' }}
+              style={{ width: projectDuration > 0 ? `${(globalCurrentTime / projectDuration) * 100}%` : '0%' }}
             >
               <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 bg-primary rounded-full opacity-0 group-hover/progress:opacity-100 border-2 border-background shadow transition-opacity group-hover/progress:bg-accent"></div>
             </div>
@@ -266,24 +239,24 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" aria-label="Rewind 5s" onClick={() => handleSkip(-5)} disabled={!previewableItem || clipDuration <= 0}>
+              <Button variant="ghost" size="icon" aria-label="Rewind 5s" onClick={() => handleSkip(-5)} disabled={projectDuration <= 0}>
                 <SkipBack className="h-5 w-5" />
               </Button>
-              <Button variant="ghost" size="icon" aria-label={isPlaying ? "Pause" : "Play"} onClick={togglePlayPause} disabled={!previewableItem || clipDuration <= 0}>
-                {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+              <Button variant="ghost" size="icon" aria-label={isGlobalPlaying ? "Pause" : "Play"} onClick={onTogglePlayPause} disabled={projectDuration <= 0}>
+                {isGlobalPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
               </Button>
-              <Button variant="ghost" size="icon" aria-label="Fast Forward 5s" onClick={() => handleSkip(5)} disabled={!previewableItem || clipDuration <= 0}>
+              <Button variant="ghost" size="icon" aria-label="Fast Forward 5s" onClick={() => handleSkip(5)} disabled={projectDuration <= 0}>
                 <SkipForward className="h-5 w-5" />
               </Button>
-              <Button variant="ghost" size="icon" aria-label={isMuted ? "Unmute" : "Mute"} onClick={toggleMute} disabled={!previewableItem}>
+              <Button variant="ghost" size="icon" aria-label={isMuted ? "Unmute" : "Mute"} onClick={toggleMute}>
                   {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
               </Button>
             </div>
             <div className="text-sm text-muted-foreground tabular-nums">
-              {formatTime(currentTime)} / {formatTime(clipDuration)}
+              {formatTime(globalCurrentTime)} / {formatTime(projectDuration)}
             </div>
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" aria-label="Fullscreen" onClick={toggleFullScreen} disabled={mediaType !== 'video' || !previewableItem}>
+              <Button variant="ghost" size="icon" aria-label="Fullscreen" onClick={toggleFullScreen} disabled={!primaryVideoClipId}>
                 <Maximize className="h-5 w-5" />
               </Button>
             </div>
@@ -293,3 +266,5 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
     </Card>
   );
 }
+
+    

@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { GripVertical, Film, Music2, Baseline } from "lucide-react";
 import React from "react";
-import type { Track, Clip } from "@/app/page"; // Import new interfaces
+import type { Track, Clip } from "@/app/page"; 
 import { cn } from "@/lib/utils";
 
 
@@ -14,6 +14,7 @@ interface TimelineTrackDisplayProps {
   projectDuration: number;
   selectedClipId: string | null;
   onClipSelect: (clipId: string) => void;
+  globalCurrentTime: number;
 }
 
 const getIconForTrackType = (type: 'video' | 'audio' | 'caption') => {
@@ -66,7 +67,7 @@ const TimelineTrackDisplay: React.FC<TimelineTrackDisplayProps> = ({ track, proj
               )}
               style={{
                 left: `${leftPercentage}%`,
-                width: `${Math.max(0.5, widthPercentage)}%`,
+                width: `${Math.max(0.5, widthPercentage)}%`, // Ensure a minimum visible width
               }}
               title={`${clip.name} (${clip.timelineStart.toFixed(1)}s - ${(clip.timelineStart + clipDurationOnTimeline).toFixed(1)}s)`}
               onClick={() => onClipSelect(clip.id)}
@@ -80,6 +81,7 @@ const TimelineTrackDisplay: React.FC<TimelineTrackDisplayProps> = ({ track, proj
             </div>
           );
         })}
+        {/* Ruler Marks */}
         {Array.from({ length: Math.max(1, Math.floor(projectDuration / 10)) + 1 }).map((_, i) => {
           const timeMark = i * 10;
           if (timeMark > projectDuration && projectDuration > 0 && i > 0) return null;
@@ -106,17 +108,26 @@ interface TimelineProps {
   projectDuration: number;
   selectedClipId: string | null;
   onClipSelect: (clipId: string) => void;
+  globalCurrentTime: number;
 }
 
-export default function Timeline({ tracks, projectDuration, selectedClipId, onClipSelect }: TimelineProps) {
+export default function Timeline({ tracks, projectDuration, selectedClipId, onClipSelect, globalCurrentTime }: TimelineProps) {
+  const playheadPosition = projectDuration > 0 ? (globalCurrentTime / projectDuration) * 100 : 0;
+
   return (
     <Card className="flex-grow flex flex-col shadow-md overflow-hidden">
       <CardHeader className="pb-2 pt-4">
         <CardTitle className="text-lg font-headline">Timeline ({projectDuration.toFixed(0)}s)</CardTitle>
       </CardHeader>
-      <CardContent className="flex-grow p-0 overflow-hidden">
+      <CardContent className="flex-grow p-0 overflow-hidden relative"> {/* Added relative for playhead */}
         <ScrollArea className="h-full w-full">
-          <div className="min-w-[1200px]"> 
+          <div className="min-w-[1200px] relative"> {/* Added relative for playhead container */}
+             {/* Playhead Line */}
+            <div 
+              className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-10 pointer-events-none"
+              style={{ left: `${playheadPosition}%` }}
+              aria-hidden="true"
+            />
             {tracks.map(track => (
               <TimelineTrackDisplay 
                 key={track.id}
@@ -124,6 +135,7 @@ export default function Timeline({ tracks, projectDuration, selectedClipId, onCl
                 projectDuration={projectDuration}
                 selectedClipId={selectedClipId}
                 onClipSelect={onClipSelect}
+                globalCurrentTime={globalCurrentTime}
               />
             ))}
             {tracks.length === 0 && (
@@ -139,3 +151,5 @@ export default function Timeline({ tracks, projectDuration, selectedClipId, onCl
     </Card>
   );
 }
+
+    

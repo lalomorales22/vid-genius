@@ -1,11 +1,11 @@
 
 "use client";
 
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import AppHeader from "@/components/vidgenius/AppHeader";
 import MediaImportArea from "@/components/vidgenius/MediaImportArea";
 import Toolbox from "@/components/vidgenius/Toolbox";
-import VideoPreview, { type PreviewableItem } from "@/components/vidgenius/VideoPreview";
+import VideoPreview from "@/components/vidgenius/VideoPreview";
 import Timeline from "@/components/vidgenius/Timeline";
 import AiEditorSidebar from "@/components/vidgenius/AiEditorSidebar";
 import TimelineControls from "@/components/vidgenius/TimelineControls";
@@ -26,9 +26,9 @@ export interface Clip {
   trackId: string;
   name: string;
   type: 'video' | 'audio' | 'caption';
-  sourceStart: number;
-  sourceEnd: number;
-  timelineStart: number;
+  sourceStart: number; // in seconds, within the original media file
+  sourceEnd: number;   // in seconds, within the original media file
+  timelineStart: number; // in seconds, on the project timeline
   color: string;
   text?: string;
 }
@@ -40,13 +40,18 @@ export interface Track {
   clips: Clip[];
 }
 
-const DEFAULT_PROJECT_DURATION = 60;
+const DEFAULT_PROJECT_DURATION = 60; // seconds
 
 export default function VidGeniusPage() {
   const [mediaLibrary, setMediaLibrary] = useState<MediaFile[]>([]);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const { toast } = useToast();
+
+  const [globalCurrentTime, setGlobalCurrentTime] = useState<number>(0);
+  const [isGlobalPlaying, setIsGlobalPlaying] = useState<boolean>(false);
+  const requestAnimationFrameIdRef = useRef<number | null>(null);
+  const animationLoopStartTimeRef = useRef<number>(0);
 
   const projectDuration = useMemo(() => {
     if (tracks.length === 0) {
@@ -64,6 +69,61 @@ export default function VidGeniusPage() {
     return Math.max(DEFAULT_PROJECT_DURATION, maxEndTime);
   }, [tracks]);
 
+  const animationFrameLoop = useCallback(() => {
+    const elapsedSinceLoopStart = (Date.now() - animationLoopStartTimeRef.current) / 1000;
+    const newCurrentTime = Math.min(elapsedSinceLoopStart, projectDuration);
+
+    setGlobalCurrentTime(newCurrentTime);
+
+    if (newCurrentTime >= projectDuration) {
+      setIsGlobalPlaying(false);
+      if (requestAnimationFrameIdRef.current) {
+        cancelAnimationFrame(requestAnimationFrameIdRef.current);
+        requestAnimationFrameIdRef.current = null;
+      }
+      // Optionally reset time or keep at end: setGlobalCurrentTime(projectDuration);
+      return;
+    }
+    requestAnimationFrameIdRef.current = requestAnimationFrame(animationFrameLoop);
+  }, [projectDuration]);
+
+  const handleToggleGlobalPlayPause = useCallback(() => {
+    setIsGlobalPlaying(prevIsPlaying => {
+      const nowPlaying = !prevIsPlaying;
+      if (nowPlaying) {
+        let effectiveCurrentTime = globalCurrentTime;
+        if (globalCurrentTime >= projectDuration) {
+          effectiveCurrentTime = 0;
+          setGlobalCurrentTime(0);
+        }
+        animationLoopStartTimeRef.current = Date.now() - effectiveCurrentTime * 1000;
+        if (requestAnimationFrameIdRef.current) {
+          cancelAnimationFrame(requestAnimationFrameIdRef.current);
+        }
+        animationFrameLoop();
+      } else {
+        if (requestAnimationFrameIdRef.current) {
+          cancelAnimationFrame(requestAnimationFrameIdRef.current);
+          requestAnimationFrameIdRef.current = null;
+        }
+      }
+      return nowPlaying;
+    });
+  }, [globalCurrentTime, projectDuration, animationFrameLoop]);
+
+  const handleGlobalSeek = useCallback((newTime: number) => {
+    const newCappedTime = Math.max(0, Math.min(newTime, projectDuration));
+    setGlobalCurrentTime(newCappedTime);
+    if (isGlobalPlaying) {
+      animationLoopStartTimeRef.current = Date.now() - newCappedTime * 1000;
+      if (requestAnimationFrameIdRef.current) { // Ensure loop continues if it was playing
+         cancelAnimationFrame(requestAnimationFrameIdRef.current);
+         requestAnimationFrameIdRef.current = requestAnimationFrame(animationFrameLoop);
+      }
+    }
+  }, [isGlobalPlaying, projectDuration, animationFrameLoop]);
+
+
   const readFileAsDataURL = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -79,12 +139,12 @@ export default function VidGeniusPage() {
       mediaElement.preload = 'metadata';
       mediaElement.onloadedmetadata = () => {
         resolve(mediaElement.duration);
-        URL.revokeObjectURL(objectUrl); // Revoke here after duration is read
+        URL.revokeObjectURL(objectUrl);
         mediaElement.remove();
       };
       mediaElement.onerror = () => {
         resolve(0);
-        URL.revokeObjectURL(objectUrl); // Also revoke on error
+        URL.revokeObjectURL(objectUrl);
         mediaElement.remove();
         console.error("Error loading media metadata for duration check");
       }
@@ -95,9 +155,8 @@ export default function VidGeniusPage() {
   const addMediaFileToLibraryAndTimeline = useCallback(async (file: File) => {
     try {
       const dataUri = await readFileAsDataURL(file);
-      const objectUrlForDuration = URL.createObjectURL(file); // Create new URL for duration check
+      const objectUrlForDuration = URL.createObjectURL(file);
       const duration = await getMediaDuration(file, objectUrlForDuration);
-      // URL.revokeObjectURL(objectUrlForDuration) is handled inside getMediaDuration
 
       if (duration === 0 && (file.type.startsWith('video/') || file.type.startsWith('audio/'))) {
         setTimeout(() => {
@@ -202,28 +261,14 @@ export default function VidGeniusPage() {
     setSelectedClipId(prevId => (prevId === clipId ? null : clipId));
   }, []);
 
-  const previewableItem = useMemo<PreviewableItem | null>(() => {
-    if (selectedClipId) {
-      for (const track of tracks) {
-        const clip = track.clips.find(c => c.id === selectedClipId);
-        if (clip) {
-          const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
-          if (mediaFile) {
-            return { mediaFile, clip };
-          }
-        }
-      }
-    }
-    const firstVideoTrack = tracks.find(t => t.type === 'video');
-    if (firstVideoTrack && firstVideoTrack.clips.length > 0) {
-      const firstClip = firstVideoTrack.clips[0];
-      const mediaFile = mediaLibrary.find(mf => mf.id === firstClip.mediaFileId);
-      if (mediaFile) {
-        return { mediaFile, clip: firstClip };
-      }
+  const selectedClipForControls = useMemo(() => {
+    if (!selectedClipId) return null;
+    for (const track of tracks) {
+      const clip = track.clips.find(c => c.id === selectedClipId);
+      if (clip) return clip;
     }
     return null;
-  }, [selectedClipId, tracks, mediaLibrary]);
+  }, [selectedClipId, tracks]);
 
   const handleUpdateClipTimes = useCallback((clipId: string, newTimes: { sourceStart?: number; sourceEnd?: number }) => {
     setTracks(prevTracks =>
@@ -241,22 +286,22 @@ export default function VidGeniusPage() {
             updatedEnd = Math.min(mediaFile.duration, updatedEnd);
 
             if (updatedStart >= updatedEnd) {
-              if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) { // User changed start
-                updatedStart = Math.min(updatedStart, clip.sourceEnd - 0.1); // Ensure start is less than original end
-              } else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) { // User changed end
-                updatedEnd = Math.max(updatedEnd, clip.sourceStart + 0.1); // Ensure end is greater than original start
-              } else { // Both changed or invalid state
+              if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) {
+                updatedStart = Math.min(updatedStart, clip.sourceEnd - 0.1);
+              } else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) {
+                updatedEnd = Math.max(updatedEnd, clip.sourceStart + 0.1);
+              } else {
                  updatedStart = Math.min(updatedStart, mediaFile.duration - 0.1);
-                 updatedEnd = updatedStart + 0.1; // Force minimal duration if both make it invalid
+                 updatedEnd = updatedStart + 0.1;
               }
               updatedEnd = Math.min(mediaFile.duration, updatedEnd);
               updatedStart = Math.max(0, updatedStart);
 
-               if (updatedStart >= updatedEnd) { // Final safety net
+               if (updatedStart >= updatedEnd) {
                  setTimeout(() => {
                    toast({ title: "Invalid trim", description: "Clip start time must be before end time and within media bounds.", variant: "destructive"});
                  }, 0);
-                 return clip; // Revert to original clip if still invalid
+                 return clip;
                }
             }
             setTimeout(() => {
@@ -270,25 +315,25 @@ export default function VidGeniusPage() {
     );
   }, [mediaLibrary, toast]);
 
-  const selectedClipForControls = useMemo(() => {
-    if (!selectedClipId) return null;
-    for (const track of tracks) {
-      const clip = track.clips.find(c => c.id === selectedClipId);
-      if (clip) return clip;
-    }
-    return null;
-  }, [selectedClipId, tracks]);
 
   return (
     <SidebarProvider defaultOpen={true}>
       <div className="flex h-screen bg-background text-foreground overflow-hidden">
          <SidebarInset>
-          <div className="flex flex-col h-full overflow-auto">
+          <div className="flex flex-col h-full overflow-auto"> {/* Added overflow-auto here */}
             <AppHeader />
-            <main className="flex-1 p-4 lg:p-6 space-y-4 overflow-y-auto">
+            <main className="flex-1 p-4 lg:p-6 space-y-4 overflow-y-auto"> {/* Kept overflow-y-auto for vertical */}
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
                 <div className="xl:col-span-2 space-y-4">
-                  <VideoPreview previewableItem={previewableItem} />
+                  <VideoPreview
+                    tracks={tracks}
+                    mediaLibrary={mediaLibrary}
+                    globalCurrentTime={globalCurrentTime}
+                    isGlobalPlaying={isGlobalPlaying}
+                    projectDuration={projectDuration}
+                    onTogglePlayPause={handleToggleGlobalPlayPause}
+                    onSeek={handleGlobalSeek}
+                  />
                   <TimelineControls
                     selectedClip={selectedClipForControls}
                     onUpdateClipTimes={handleUpdateClipTimes}
@@ -308,6 +353,7 @@ export default function VidGeniusPage() {
                   projectDuration={projectDuration}
                   selectedClipId={selectedClipId}
                   onClipSelect={handleSelectClip}
+                  globalCurrentTime={globalCurrentTime}
                 />
               </div>
             </main>
@@ -318,4 +364,6 @@ export default function VidGeniusPage() {
     </SidebarProvider>
   );
 }
+    
+
     
