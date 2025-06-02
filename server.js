@@ -1,23 +1,25 @@
 
 const express = require('express');
 const path = require('path');
+const cors = require('cors'); // Import cors
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Enable CORS for all routes and origins (for development)
+// For production, configure specific origins: app.use(cors({ origin: 'http://your-nextjs-app.com' }));
+app.use(cors()); 
+
 // Middleware to parse JSON bodies
-app.use(express.json({ limit: '50mb' })); // Increase limit if sending large data URIs, though not recommended for production.
+app.use(express.json({ limit: '50mb' })); 
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 
 // Placeholder endpoint for video export
 app.post('/api/export-video', (req, res) => {
   console.log('Video export request received at /api/export-video');
-  // In a real application, req.body would contain the timeline data,
-  // media file references, caption details, etc.
   console.log('Request body length:', req.body ? JSON.stringify(req.body).length : 0);
   
-  // You can log parts of the data to verify, but avoid logging very large objects entirely in production.
   if (req.body) {
     console.log('Project Duration:', req.body.projectDuration);
     console.log('Number of Tracks:', req.body.tracks ? req.body.tracks.length : 0);
@@ -28,18 +30,6 @@ app.post('/api/export-video', (req, res) => {
     console.log('Number of Media Files in Library (summary):', req.body.mediaLibrary ? req.body.mediaLibrary.length : 0);
   }
   
-
-  // In a real application, you would trigger your video processing logic here.
-  // This might involve:
-  // 1. Receiving timeline data, media file references (or IDs if files are pre-uploaded/accessible), caption details, etc. from req.body.
-  // 2. Using a library like FFmpeg (or a cloud service) to:
-  //    - Decode all source video/audio files.
-  //    - Composite video tracks.
-  //    - Render text overlays for captions.
-  //    - Mix audio tracks.
-  //    - Encode the final output to MP4.
-  // 3. Storing the output and providing a download link or streaming it.
-
   res.status(200).json({ 
     success: true, 
     message: 'Video export request received by server. Actual video processing logic (e.g., using FFmpeg) needs to be implemented here.',

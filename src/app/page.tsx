@@ -260,7 +260,7 @@ export default function VidGeniusPage() {
 
     const newClipId = `caption-clip-${Date.now()}`;
     const captionTrackCount = tracks.filter(t => t.type === 'caption' && t.name.startsWith("Caption Track")).length;
-    const targetTrackId = `track-caption-manual-${Date.now()}`; // Unique ID for each new manual caption track
+    const targetTrackId = `track-caption-manual-${Date.now()}`; 
     const targetTrackName = `Caption Track ${captionTrackCount + 1}`;
     
     const newCaptionClip: Clip = {
@@ -326,7 +326,7 @@ export default function VidGeniusPage() {
         name: `AI Subtitles for ${selectedClip.name.substring(0,15)}`,
         type: 'caption',
         sourceStart: 0, 
-        sourceEnd: DEFAULT_CAPTION_DURATION, // Default duration, AI ideally should provide timing
+        sourceEnd: DEFAULT_CAPTION_DURATION, 
         timelineStart: selectedClip.timelineStart, 
         color: 'bg-teal-500', 
         text: result.captions,
@@ -484,11 +484,14 @@ export default function VidGeniusPage() {
     const exportData = {
       projectDuration,
       tracks,
-      // Note: Sending full dataUris in mediaLibrary can be very large.
-      // A real implementation might send only media IDs/references,
-      // assuming the server can access the original files.
-      // For this example, we'll keep it simple but be mindful of payload size.
-      mediaLibrary: mediaLibrary.map(mf => ({ id: mf.id, name: mf.name, type: mf.type, duration: mf.duration /* dataUri excluded for brevity/performance */})),
+      mediaLibrary: mediaLibrary.map(mf => ({ 
+        id: mf.id, 
+        name: mf.name, 
+        type: mf.type, 
+        duration: mf.duration 
+        // dataUri intentionally excluded for this request to keep payload smaller.
+        // Server would typically retrieve full media from storage based on ID.
+      })),
     };
 
     setTimeout(() => {
@@ -499,7 +502,7 @@ export default function VidGeniusPage() {
     }, 0);
 
     try {
-      const response = await fetch('/api/export-video', {
+      const response = await fetch('http://localhost:3001/api/export-video', { // Absolute URL for the Express server
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -518,7 +521,7 @@ export default function VidGeniusPage() {
           });
         }, 0);
       } else {
-        throw new Error(result.message || "Server error during export request.");
+        throw new Error(result.message || `Server error: ${response.status}`);
       }
     } catch (error) {
       console.error("Export Video Error:", error);
