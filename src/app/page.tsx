@@ -25,7 +25,7 @@ export interface MediaFile {
 
 export interface Clip {
   id: string;
-  mediaFileId: string; // For video/audio, points to MediaFile
+  mediaFileId: string; // For video/audio, points to MediaFile. Empty for captions.
   trackId: string;
   name: string;
   type: 'video' | 'audio' | 'caption';
@@ -34,6 +34,7 @@ export interface Clip {
   timelineStart: number; // in seconds, on the project timeline
   color: string;
   text?: string; // For captions
+  // Future: x, y, fontSize, textColor for captions
 }
 
 export interface Track {
@@ -44,6 +45,7 @@ export interface Track {
 }
 
 const DEFAULT_PROJECT_DURATION = 60; // seconds
+const DEFAULT_CAPTION_DURATION = 5; // seconds
 
 export default function VidGeniusPage() {
   const [mediaLibrary, setMediaLibrary] = useState<MediaFile[]>([]);
@@ -65,8 +67,7 @@ export default function VidGeniusPage() {
       track.clips.forEach(clip => {
         let clipDuration = 0;
         if (clip.type === 'caption') {
-          // Estimate caption duration, e.g., 5 seconds or based on text length
-          clipDuration = clip.text ? Math.max(3, clip.text.length / 15) : 5;
+          clipDuration = clip.sourceEnd - clip.sourceStart; // Captions use sourceStart/End for duration
         } else {
           clipDuration = clip.sourceEnd - clip.sourceStart;
         }
@@ -81,11 +82,11 @@ export default function VidGeniusPage() {
 
   const animationFrameLoop = useCallback(() => {
     const elapsedSinceLoopStart = (Date.now() - animationLoopStartTimeRef.current) / 1000;
-    const newCurrentTime = globalCurrentTime + elapsedSinceLoopStart; // Accumulate time based on when loop started
+    const newCurrentTime = globalCurrentTime + elapsedSinceLoopStart; 
 
     setGlobalCurrentTime(prevTime => {
       const currentDelta = (Date.now() - animationLoopStartTimeRef.current) / 1000;
-      animationLoopStartTimeRef.current = Date.now(); // Reset start time for next frame
+      animationLoopStartTimeRef.current = Date.now(); 
       const nextTime = prevTime + currentDelta;
       
       if (nextTime >= projectDuration) {
@@ -102,7 +103,7 @@ export default function VidGeniusPage() {
     if (globalCurrentTime < projectDuration && isGlobalPlaying) {
        requestAnimationFrameIdRef.current = requestAnimationFrame(animationFrameLoop);
     } else if (globalCurrentTime >= projectDuration && isGlobalPlaying) {
-        setIsGlobalPlaying(false); // Stop if it reaches the end
+        setIsGlobalPlaying(false); 
         setGlobalCurrentTime(projectDuration);
          if (requestAnimationFrameIdRef.current) {
           cancelAnimationFrame(requestAnimationFrameIdRef.current);
@@ -117,11 +118,11 @@ export default function VidGeniusPage() {
       const nowPlaying = !prevIsPlaying;
       if (nowPlaying) {
         let effectiveCurrentTime = globalCurrentTime;
-        if (globalCurrentTime >= projectDuration && projectDuration > 0) { // Ensure projectDuration is positive
+        if (globalCurrentTime >= projectDuration && projectDuration > 0) { 
           effectiveCurrentTime = 0;
           setGlobalCurrentTime(0);
         }
-        animationLoopStartTimeRef.current = Date.now(); // Reset start time when play is initiated
+        animationLoopStartTimeRef.current = Date.now(); 
         
         if (requestAnimationFrameIdRef.current) {
           cancelAnimationFrame(requestAnimationFrameIdRef.current);
@@ -142,9 +143,8 @@ export default function VidGeniusPage() {
     const newCappedTime = Math.max(0, Math.min(newTime, projectDuration));
     setGlobalCurrentTime(newCappedTime);
     if (isGlobalPlaying) {
-      // Adjust the loop start time to maintain smooth playback from the new seek position
       animationLoopStartTimeRef.current = Date.now(); 
-      if (!requestAnimationFrameIdRef.current) { // If not already playing, start the loop
+      if (!requestAnimationFrameIdRef.current) { 
          requestAnimationFrameIdRef.current = requestAnimationFrame(animationFrameLoop);
       }
     }
@@ -219,7 +219,7 @@ export default function VidGeniusPage() {
         type: trackType,
         sourceStart: 0,
         sourceEnd: newMediaFile.duration,
-        timelineStart: 0, // Default to start of timeline
+        timelineStart: 0, 
         color: trackType === 'video' ? 'bg-blue-500' : (trackType === 'audio' ? 'bg-green-500' : 'bg-orange-500'),
       };
 
@@ -249,6 +249,68 @@ export default function VidGeniusPage() {
       }, 0);
     }
   }, [tracks, toast]);
+
+  const handleAddTextCaption = useCallback((text: string) => {
+    if (!text.trim()) {
+      setTimeout(() => {
+        toast({ title: "Empty Text", description: "Cannot add an empty caption.", variant: "default" });
+      }, 0);
+      return;
+    }
+
+    const newClipId = `caption-clip-${Date.now()}`;
+    let targetTrackId = '';
+    let targetTrackName = '';
+
+    const existingCaptionTracks = tracks.filter(t => t.type === 'caption');
+    if (existingCaptionTracks.length > 0) {
+      // Add to the first existing caption track for simplicity, or create new if desired
+      targetTrackId = existingCaptionTracks[0].id;
+    } else {
+      targetTrackId = `track-caption-${Date.now()}`;
+      targetTrackName = `Caption Track 1`;
+    }
+    
+    const newCaptionClip: Clip = {
+      id: newClipId,
+      mediaFileId: '', // No media file for text captions
+      trackId: targetTrackId,
+      name: `Caption: ${text.substring(0, 20)}${text.length > 20 ? '...' : ''}`,
+      type: 'caption',
+      sourceStart: 0, // For captions, sourceStart is 0
+      sourceEnd: DEFAULT_CAPTION_DURATION, // And sourceEnd is the duration
+      timelineStart: globalCurrentTime, // Add at current playhead time
+      color: 'bg-yellow-500',
+      text: text,
+    };
+
+    setTracks(prevTracks => {
+      let trackExists = false;
+      const updatedTracks = prevTracks.map(track => {
+        if (track.id === targetTrackId) {
+          trackExists = true;
+          return { ...track, clips: [...track.clips, newCaptionClip] };
+        }
+        return track;
+      });
+
+      if (!trackExists) {
+        const newTrack: Track = {
+          id: targetTrackId,
+          name: targetTrackName || `Caption Track ${existingCaptionTracks.length + 1}`,
+          type: 'caption',
+          clips: [newCaptionClip],
+        };
+        return [...updatedTracks, newTrack];
+      }
+      return updatedTracks;
+    });
+
+    setTimeout(() => {
+      toast({ title: "Text Caption Added", description: `"${newCaptionClip.name}" added to the timeline.` });
+    }, 0);
+
+  }, [tracks, toast, globalCurrentTime]);
 
   const handleGenerateSubtitles = useCallback(async (language: string = "en") => {
     if (!selectedClipId) {
@@ -280,19 +342,18 @@ export default function VidGeniusPage() {
 
       const newCaptionClip: Clip = {
         id: `caption-${Date.now()}`,
-        mediaFileId: '', // No direct media file for captions, text is embedded
-        trackId: '', // Will be assigned when adding to a new track
+        mediaFileId: '', 
+        trackId: '', 
         name: `Subtitles for ${selectedClip.name}`,
         type: 'caption',
-        sourceStart: 0, // Not applicable for text
-        sourceEnd: 0,   // Not applicable for text
-        timelineStart: selectedClip.timelineStart, // Align with video clip start
+        sourceStart: 0, 
+        sourceEnd: DEFAULT_CAPTION_DURATION, // Default duration, can be adjusted
+        timelineStart: selectedClip.timelineStart, 
         color: 'bg-yellow-500',
         text: result.captions,
       };
 
-      // Add to a new caption track or an existing one
-      let captionTrack = tracks.find(t => t.type === 'caption' && t.name.includes("Caption Track")); // Simple find logic
+      let captionTrack = tracks.find(t => t.type === 'caption' && t.name.includes("Caption Track")); 
       if (captionTrack) {
         newCaptionClip.trackId = captionTrack.id;
         setTracks(prevTracks => prevTracks.map(t => 
@@ -335,13 +396,11 @@ export default function VidGeniusPage() {
       const newTracks = prevTracks.map(track => {
         const filteredClips = track.clips.filter(clip => clip.id !== selectedClipId);
         if (filteredClips.length === 0 && track.clips.some(c => c.id === selectedClipId)) {
-          // If all clips from a track are removed, remove the track itself
           return null;
         }
         return { ...track, clips: filteredClips };
-      }).filter(track => track !== null) as Track[]; // Type assertion to filter out nulls
+      }).filter(track => track !== null) as Track[]; 
 
-      // Re-number tracks if some are deleted
       const trackCounts: { [key: string]: number } = { video: 0, audio: 0, caption: 0 };
       return newTracks.map(track => {
         trackCounts[track.type]++;
@@ -371,54 +430,56 @@ export default function VidGeniusPage() {
     return null;
   }, [selectedClipId, tracks]);
 
-  const handleUpdateClipTimes = useCallback((clipId: string, newTimes: { sourceStart?: number; sourceEnd?: number }) => {
+  const handleUpdateClipTimes = useCallback((clipId: string, newTimes: { sourceStart?: number; sourceEnd?: number; timelineStart?: number }) => {
     setTracks(prevTracks =>
       prevTracks.map(track => ({
         ...track,
         clips: track.clips.map(clip => {
           if (clip.id === clipId) {
             const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
-            // For caption clips, mediaFile might not exist or duration isn't relevant in the same way
-            if (!mediaFile && clip.type !== 'caption') return clip;
-
-
+            
             let updatedStart = newTimes.sourceStart !== undefined ? newTimes.sourceStart : clip.sourceStart;
             let updatedEnd = newTimes.sourceEnd !== undefined ? newTimes.sourceEnd : clip.sourceEnd;
+            let updatedTimelineStart = newTimes.timelineStart !== undefined ? newTimes.timelineStart : clip.timelineStart;
 
-            // If it's a media clip, validate against media file duration
-            if (mediaFile && clip.type !== 'caption') {
+            if (clip.type === 'caption') {
+              // For captions, sourceStart is usually 0, sourceEnd is duration.
+              // timelineStart can be updated freely.
+              updatedStart = Math.max(0, updatedStart);
+              if (updatedStart >= updatedEnd) {
+                updatedEnd = updatedStart + 0.1; // Ensure min duration
+              }
+            } else if (mediaFile) { // Video or Audio clips
               updatedStart = Math.max(0, updatedStart);
               updatedEnd = Math.min(mediaFile.duration, updatedEnd);
 
               if (updatedStart >= updatedEnd) {
-                // Attempt to fix invalid trim, ensuring minimum 0.1s duration
-                if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) { // Only start changed
+                if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) { 
                   updatedStart = Math.min(updatedStart, clip.sourceEnd - 0.1);
-                } else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) { // Only end changed
+                } else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) { 
                   updatedEnd = Math.max(updatedEnd, clip.sourceStart + 0.1);
-                } else { // Both might have changed or are being set
+                } else { 
                    updatedStart = Math.min(updatedStart, mediaFile.duration - 0.1);
-                   updatedEnd = updatedStart + 0.1; // Ensure end is after start
+                   updatedEnd = updatedStart + 0.1; 
                 }
-                // Final check to ensure within bounds
                 updatedEnd = Math.min(mediaFile.duration, updatedEnd);
                 updatedStart = Math.max(0, updatedStart);
 
-                 if (updatedStart >= updatedEnd) { // If still invalid, show toast and revert
+                 if (updatedStart >= updatedEnd) { 
                    setTimeout(() => {
                      toast({ title: "Invalid trim", description: "Clip start time must be before end time and within media bounds.", variant: "destructive"});
                    }, 0);
-                   return clip; // Return original clip
+                   return clip; 
                  }
               }
+            } else { // No media file and not a caption, shouldn't happen for video/audio
+              return clip;
             }
-            // For captions, start/end times are more about placement, less about source media trimming.
-            // We might add different validation for captions later if needed.
 
             setTimeout(() => {
-              toast({ title: "Clip Trimmed", description: `Clip ${clip.name} updated.`});
+              toast({ title: "Clip Updated", description: `Clip ${clip.name} updated.`});
             }, 0);
-            return { ...clip, sourceStart: updatedStart, sourceEnd: updatedEnd };
+            return { ...clip, sourceStart: updatedStart, sourceEnd: updatedEnd, timelineStart: updatedTimelineStart };
           }
           return clip;
         })
@@ -431,9 +492,9 @@ export default function VidGeniusPage() {
     <SidebarProvider defaultOpen={true}>
       <div className="flex h-screen bg-background text-foreground overflow-hidden">
          <SidebarInset>
-          <div className="flex flex-col h-full overflow-auto"> {/* Added overflow-auto here */}
+          <div className="flex flex-col h-full overflow-auto"> 
             <AppHeader />
-            <main className="flex-1 p-4 lg:p-6 space-y-4 overflow-y-auto"> {/* Kept overflow-y-auto for vertical */}
+            <main className="flex-1 p-4 lg:p-6 space-y-4 overflow-y-auto"> 
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
                 <div className="xl:col-span-2 space-y-4">
                   <VideoPreview
@@ -455,6 +516,7 @@ export default function VidGeniusPage() {
                   <Toolbox
                     onAddMediaToTimeline={addMediaFileToLibraryAndTimeline}
                     onDeleteSelectedClip={handleDeleteSelectedClip}
+                    onAddTextCaption={handleAddTextCaption}
                   />
                 </div>
               </div>
@@ -465,6 +527,7 @@ export default function VidGeniusPage() {
                   selectedClipId={selectedClipId}
                   onClipSelect={handleSelectClip}
                   globalCurrentTime={globalCurrentTime}
+                  onUpdateClipTimes={handleUpdateClipTimes}
                 />
               </div>
             </main>

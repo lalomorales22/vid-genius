@@ -2,7 +2,7 @@
 "use client";
 
 import Image from "next/image";
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Maximize, Music } from "lucide-react";
@@ -38,42 +38,33 @@ export default function VideoPreview({
   const mediaElementRefs = useRef<Record<string, HTMLVideoElement | HTMLAudioElement>>({});
   const [isMuted, setIsMuted] = useState(false);
   const [primaryVideoClipId, setPrimaryVideoClipId] = useState<string | null>(null);
-  const [primaryVideoMediaFile, setPrimaryVideoMediaFile] = useState<MediaFile | null>(null);
-
-
-  // Determine primary video clip for display
+  
   useEffect(() => {
     let newPrimaryClipId: string | null = null;
-    let newPrimaryMediaFile: MediaFile | null = null;
+    
+    const videoTracks = tracks.filter(t => t.type === 'video').reverse(); 
 
-    for (const track of tracks) {
-      if (track.type === 'video') {
-        for (const clip of track.clips) {
-          const clipEffectiveDuration = clip.sourceEnd - clip.sourceStart;
-          const clipIsActive = globalCurrentTime >= clip.timelineStart && globalCurrentTime < clip.timelineStart + clipEffectiveDuration;
-          if (clipIsActive) {
-            newPrimaryClipId = clip.id;
-            const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
-            if (mediaFile) newPrimaryMediaFile = mediaFile;
-            break;
-          }
+    for (const track of videoTracks) {
+      for (const clip of track.clips) {
+        const clipEffectiveDuration = clip.sourceEnd - clip.sourceStart;
+        const clipIsActive = globalCurrentTime >= clip.timelineStart && globalCurrentTime < clip.timelineStart + clipEffectiveDuration;
+        if (clipIsActive) {
+          newPrimaryClipId = clip.id;
+          break; 
         }
       }
       if (newPrimaryClipId) break;
     }
     setPrimaryVideoClipId(newPrimaryClipId);
-    setPrimaryVideoMediaFile(newPrimaryMediaFile);
-  }, [globalCurrentTime, tracks, mediaLibrary]);
+  }, [globalCurrentTime, tracks]);
 
-  // Synchronize all media elements with global playback state
   useEffect(() => {
     Object.values(mediaElementRefs.current).forEach(mediaEl => {
       if (mediaEl) {
          mediaEl.muted = isMuted;
-         // For non-primary videos, ensure they are also muted or handled according to design
          const clipId = Object.keys(mediaElementRefs.current).find(id => mediaElementRefs.current[id] === mediaEl);
          if (mediaEl instanceof HTMLVideoElement && clipId !== primaryVideoClipId) {
-            mediaEl.muted = true; // Mute non-primary videos
+            mediaEl.muted = true; 
          }
       }
     });
@@ -83,16 +74,17 @@ export default function VideoPreview({
   useEffect(() => {
     tracks.forEach(track => {
       track.clips.forEach(clip => {
+        if (clip.type === 'caption') return; 
+
         const mediaEl = mediaElementRefs.current[clip.id];
         if (!mediaEl) return;
 
         const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
         if (!mediaFile) return;
         
-        // Ensure src is set if it hasn't been or has changed
         if (mediaEl.currentSrc !== mediaFile.dataUri && mediaEl.src !== mediaFile.dataUri ) {
              mediaEl.src = mediaFile.dataUri;
-             mediaEl.load(); // Important to re-load if src changes
+             mediaEl.load(); 
         }
         
         const clipEffectiveDuration = clip.sourceEnd - clip.sourceStart;
@@ -115,10 +107,6 @@ export default function VideoPreview({
           if (!mediaEl.paused) {
             mediaEl.pause();
           }
-           // Optionally reset currentTime for non-active clips for cleaner seeking later
-           if (mediaEl.readyState >=2 && mediaEl.currentTime !== clip.sourceStart) {
-             // mediaEl.currentTime = clip.sourceStart;
-           }
         }
       });
     });
@@ -151,13 +139,24 @@ export default function VideoPreview({
     }
   };
   
+  const activeCaptions = useMemo(() => {
+    return tracks
+      .filter(track => track.type === 'caption')
+      .flatMap(track => track.clips)
+      .filter(clip => {
+        const clipDuration = clip.sourceEnd - clip.sourceStart; // For captions, sourceStart is 0, sourceEnd is duration
+        return globalCurrentTime >= clip.timelineStart && globalCurrentTime < clip.timelineStart + clipDuration;
+      });
+  }, [tracks, globalCurrentTime]);
+
   return (
     <Card className="shadow-md overflow-hidden">
       <CardContent className="p-0">
         <div className="aspect-video bg-muted flex items-center justify-center relative group/videoplayer">
-          {/* Render all media elements, but only primary video is visible */}
           {tracks.flatMap(track => 
             track.clips.map(clip => {
+              if (clip.type === 'caption') return null; 
+
               const mediaFile = mediaLibrary.find(mf => mf.id === clip.mediaFileId);
               if (!mediaFile) return null;
 
@@ -173,7 +172,7 @@ export default function VideoPreview({
                     playsInline
                     onClick={onTogglePlayPause}
                     onDoubleClick={toggleFullScreen}
-                    muted={isMuted || clip.id !== primaryVideoClipId} // Mute non-primary videos
+                    muted={isMuted || clip.id !== primaryVideoClipId} 
                   />
                 );
               } else if (clip.type === 'audio') {
@@ -211,12 +210,27 @@ export default function VideoPreview({
                 <Play className="h-16 w-16 text-white opacity-80 hover:opacity-100 transition-opacity" />
             </div>
            )}
-             {primaryVideoClipId === null && tracks.some(t => t.type === 'audio' && t.clips.length > 0) && (
-                 <div className="flex flex-col items-center text-muted-foreground p-4 pointer-events-none">
-                     <Music className="w-24 h-24 mb-4" />
-                     <p className="text-lg font-semibold">Audio Playback</p>
-                 </div>
-             )}
+
+           {primaryVideoClipId === null && tracks.some(t => t.type === 'audio' && t.clips.some(c => {
+             const clipEffectiveDuration = c.sourceEnd - c.sourceStart;
+             return globalCurrentTime >= c.timelineStart && globalCurrentTime < c.timelineStart + clipEffectiveDuration;
+           })) && (
+            <div className="flex flex-col items-center text-muted-foreground p-4 pointer-events-none">
+                <Music className="w-24 h-24 mb-4" />
+                <p className="text-lg font-semibold">Audio Playback</p>
+            </div>
+           )}
+
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full px-4 flex flex-col items-center space-y-1 pointer-events-none z-10">
+            {activeCaptions.map(captionClip => (
+              <div 
+                key={captionClip.id} 
+                className="bg-black/50 text-white text-center text-sm md:text-lg p-1 md:p-2 rounded max-w-3xl"
+              >
+                {captionClip.text}
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="p-3 bg-card border-t space-y-2">

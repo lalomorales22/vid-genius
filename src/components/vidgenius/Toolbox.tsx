@@ -10,9 +10,10 @@ import { useToast } from "@/hooks/use-toast";
 interface ToolboxProps {
   onAddMediaToTimeline: (file: File) => void;
   onDeleteSelectedClip: () => void;
+  onAddTextCaption: (text: string) => void;
 }
 
-export default function Toolbox({ onAddMediaToTimeline, onDeleteSelectedClip }: ToolboxProps) {
+export default function Toolbox({ onAddMediaToTimeline, onDeleteSelectedClip, onAddTextCaption }: ToolboxProps) {
   const audioInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -30,10 +31,23 @@ export default function Toolbox({ onAddMediaToTimeline, onDeleteSelectedClip }: 
         });
       }
     }
-    // Reset file input to allow uploading the same file again
     if (event.target) {
         event.target.value = "";
     }
+  };
+
+  const handleAddTextClick = () => {
+    const text = window.prompt("Enter the text for your caption:");
+    if (text) { // Proceed if user entered text and didn't cancel
+      onAddTextCaption(text);
+    } else if (text === "") { // User entered empty string
+        toast({
+            title: "Empty Caption",
+            description: "You cannot add an empty caption.",
+            variant: "default"
+        });
+    }
+    // If user cancels (text is null), do nothing.
   };
 
   return (
@@ -72,7 +86,11 @@ export default function Toolbox({ onAddMediaToTimeline, onDeleteSelectedClip }: 
           onChange={(e) => handleFileSelect(e, 'video')}
         />
 
-        <Button variant="outline" className="w-full justify-start border-accent text-accent hover:bg-accent/10 hover:text-accent" onClick={() => toast({title: "Coming Soon!", description:"Adding text and captions will be available in a future update."})}>
+        <Button 
+          variant="outline" 
+          className="w-full justify-start border-accent text-accent hover:bg-accent/10 hover:text-accent" 
+          onClick={handleAddTextClick}
+        >
           <Baseline className="mr-2 h-5 w-5" /> Add Text/Captions
         </Button>
         <Button variant="destructive" className="w-full justify-start" onClick={onDeleteSelectedClip}>
