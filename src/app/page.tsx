@@ -26,8 +26,8 @@ export interface Clip {
   trackId: string;
   name: string;
   type: 'video' | 'audio' | 'caption';
-  sourceStart: number; 
-  sourceEnd: number;   
+  sourceStart: number;
+  sourceEnd: number;
   timelineStart: number;
   color: string;
   text?: string;
@@ -100,11 +100,13 @@ export default function VidGeniusPage() {
       // URL.revokeObjectURL(objectUrlForDuration) is handled inside getMediaDuration
 
       if (duration === 0 && (file.type.startsWith('video/') || file.type.startsWith('audio/'))) {
-        toast({
-          title: "Media Processing Error",
-          description: `Could not determine duration for ${file.name}. It might be corrupted or an unsupported format.`,
-          variant: "destructive",
-        });
+        setTimeout(() => {
+          toast({
+            title: "Media Processing Error",
+            description: `Could not determine duration for ${file.name}. It might be corrupted or an unsupported format.`,
+            variant: "destructive",
+          });
+        }, 0);
         return;
       }
 
@@ -143,25 +145,31 @@ export default function VidGeniusPage() {
       };
 
       setTracks((prevTracks) => [...prevTracks, newTrack]);
-      toast({
-        title: "Media Added",
-        description: `${newMediaFile.name} added to timeline.`,
-      });
+      setTimeout(() => {
+        toast({
+          title: "Media Added",
+          description: `${newMediaFile.name} added to timeline.`,
+        });
+      }, 0);
 
     } catch (error) {
       console.error("Error processing file:", error);
-      toast({
-        title: "File Upload Error",
-        description: "There was an issue processing your file.",
-        variant: "destructive",
-      });
+      setTimeout(() => {
+        toast({
+          title: "File Upload Error",
+          description: "There was an issue processing your file.",
+          variant: "destructive",
+        });
+      }, 0);
     }
   }, [tracks, toast]);
 
 
   const handleDeleteSelectedClip = useCallback(() => {
     if (!selectedClipId) {
-      toast({ title: "No clip selected", description: "Please select a clip to delete.", variant: "default" });
+      setTimeout(() => {
+        toast({ title: "No clip selected", description: "Please select a clip to delete.", variant: "default" });
+      }, 0);
       return;
     }
 
@@ -169,11 +177,11 @@ export default function VidGeniusPage() {
       const newTracks = prevTracks.map(track => {
         const filteredClips = track.clips.filter(clip => clip.id !== selectedClipId);
         if (filteredClips.length === 0 && track.clips.some(c => c.id === selectedClipId)) {
-          return null; 
+          return null;
         }
         return { ...track, clips: filteredClips };
       }).filter(track => track !== null) as Track[];
-      
+
       const trackCounts: { [key: string]: number } = { video: 0, audio: 0, caption: 0 };
       return newTracks.map(track => {
         trackCounts[track.type]++;
@@ -185,13 +193,15 @@ export default function VidGeniusPage() {
     });
 
     setSelectedClipId(null);
-    toast({ title: "Clip Deleted", description: "The selected clip has been removed." });
+    setTimeout(() => {
+      toast({ title: "Clip Deleted", description: "The selected clip has been removed." });
+    }, 0);
   }, [selectedClipId, toast]);
 
   const handleSelectClip = useCallback((clipId: string) => {
     setSelectedClipId(prevId => (prevId === clipId ? null : clipId));
   }, []);
-  
+
   const previewableItem = useMemo<PreviewableItem | null>(() => {
     if (selectedClipId) {
       for (const track of tracks) {
@@ -204,7 +214,6 @@ export default function VidGeniusPage() {
         }
       }
     }
-    // Fallback: find the first video media file's first clip
     const firstVideoTrack = tracks.find(t => t.type === 'video');
     if (firstVideoTrack && firstVideoTrack.clips.length > 0) {
       const firstClip = firstVideoTrack.clips[0];
@@ -217,7 +226,7 @@ export default function VidGeniusPage() {
   }, [selectedClipId, tracks, mediaLibrary]);
 
   const handleUpdateClipTimes = useCallback((clipId: string, newTimes: { sourceStart?: number; sourceEnd?: number }) => {
-    setTracks(prevTracks => 
+    setTracks(prevTracks =>
       prevTracks.map(track => ({
         ...track,
         clips: track.clips.map(clip => {
@@ -230,9 +239,8 @@ export default function VidGeniusPage() {
 
             updatedStart = Math.max(0, updatedStart);
             updatedEnd = Math.min(mediaFile.duration, updatedEnd);
-            
+
             if (updatedStart >= updatedEnd) {
-              // If start becomes greater or equal to end, try to keep a minimal duration or revert one of them
               if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) { // User changed start
                 updatedStart = Math.min(updatedStart, clip.sourceEnd - 0.1); // Ensure start is less than original end
               } else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) { // User changed end
@@ -245,12 +253,15 @@ export default function VidGeniusPage() {
               updatedStart = Math.max(0, updatedStart);
 
                if (updatedStart >= updatedEnd) { // Final safety net
-                 toast({ title: "Invalid trim", description: "Clip start time must be before end time and within media bounds.", variant: "destructive"});
+                 setTimeout(() => {
+                   toast({ title: "Invalid trim", description: "Clip start time must be before end time and within media bounds.", variant: "destructive"});
+                 }, 0);
                  return clip; // Revert to original clip if still invalid
                }
-
             }
-            toast({ title: "Clip Trimmed", description: `Clip ${clip.name} updated.`});
+            setTimeout(() => {
+              toast({ title: "Clip Trimmed", description: `Clip ${clip.name} updated.`});
+            }, 0);
             return { ...clip, sourceStart: updatedStart, sourceEnd: updatedEnd };
           }
           return clip;
@@ -272,27 +283,27 @@ export default function VidGeniusPage() {
     <SidebarProvider defaultOpen={true}>
       <div className="flex h-screen bg-background text-foreground overflow-hidden">
          <SidebarInset>
-          <div className="flex flex-col h-full overflow-auto"> {/* Added overflow-auto here for main content area */}
+          <div className="flex flex-col h-full overflow-auto">
             <AppHeader />
-            <main className="flex-1 p-4 lg:p-6 space-y-4 overflow-y-auto"> 
+            <main className="flex-1 p-4 lg:p-6 space-y-4 overflow-y-auto">
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
                 <div className="xl:col-span-2 space-y-4">
                   <VideoPreview previewableItem={previewableItem} />
-                  <TimelineControls 
+                  <TimelineControls
                     selectedClip={selectedClipForControls}
                     onUpdateClipTimes={handleUpdateClipTimes}
                   />
                 </div>
                 <div className="xl:col-span-1 space-y-4">
                   <MediaImportArea onFileUpload={addMediaFileToLibraryAndTimeline} />
-                  <Toolbox 
+                  <Toolbox
                     onAddMediaToTimeline={addMediaFileToLibraryAndTimeline}
                     onDeleteSelectedClip={handleDeleteSelectedClip}
                   />
                 </div>
               </div>
               <div className="h-[300px] min-h-[200px] flex flex-col">
-                <Timeline 
+                <Timeline
                   tracks={tracks}
                   projectDuration={projectDuration}
                   selectedClipId={selectedClipId}
@@ -307,5 +318,4 @@ export default function VidGeniusPage() {
     </SidebarProvider>
   );
 }
-
     
