@@ -8,7 +8,7 @@ import React from "react";
 import { useToast } from "@/hooks/use-toast";
 
 interface MediaImportAreaProps {
-  onFileUpload: (file: File) => void;
+  onFileUpload: (file: File) => void; // Changed to pass File object directly
 }
 
 export default function MediaImportArea({ onFileUpload }: MediaImportAreaProps) {
@@ -19,7 +19,7 @@ export default function MediaImportArea({ onFileUpload }: MediaImportAreaProps) 
     if (files) {
       Array.from(files).forEach(file => {
         if (file.type.startsWith("video/") || file.type.startsWith("audio/")) {
-          onFileUpload(file);
+          onFileUpload(file); // Pass the File object
         } else {
           toast({
             title: "Unsupported File Type",
@@ -33,7 +33,6 @@ export default function MediaImportArea({ onFileUpload }: MediaImportAreaProps) 
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     processFiles(event.target.files);
-    // Reset file input to allow uploading the same file again
     if (event.target) {
       event.target.value = "";
     }
@@ -65,6 +64,10 @@ export default function MediaImportArea({ onFileUpload }: MediaImportAreaProps) 
           onClick={handleAreaClick}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleAreaClick(); }}
+          aria-label="Import media area"
         >
           <UploadCloud className="w-12 h-12 text-muted-foreground mb-2" />
           <p className="text-sm text-muted-foreground mb-2">

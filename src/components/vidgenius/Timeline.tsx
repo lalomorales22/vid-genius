@@ -5,63 +5,89 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { GripVertical, Film, Music2, Baseline } from "lucide-react";
 import React from "react";
-import type { MediaFile } from "@/app/page"; // Assuming MediaFile is exported from page.tsx
+import type { Track, Clip } from "@/app/page"; // Import new interfaces
+import { cn } from "@/lib/utils";
 
-interface Clip {
-  id: string;
-  name: string;
-  start: number; // in seconds
-  end: number;   // in seconds
-  color: string;
-  type: 'video' | 'audio' | 'caption';
-  dataUri?: string; // Optional: might be useful later
+
+interface TimelineTrackDisplayProps {
+  track: Track;
+  projectDuration: number;
+  selectedClipId: string | null;
+  onClipSelect: (clipId: string) => void;
 }
 
-interface TimelineTrackProps {
-  title: string;
-  icon: React.ReactNode;
-  clips: Clip[];
-  bgColorClass?: string;
-  totalTimelineDurationSeconds: number; // Total duration of the timeline for scaling
+const getIconForTrackType = (type: 'video' | 'audio' | 'caption') => {
+  switch (type) {
+    case 'video':
+      return <Film className="h-5 w-5 text-blue-500" />;
+    case 'audio':
+      return <Music2 className="h-5 w-5 text-green-500" />;
+    case 'caption':
+      return <Baseline className="h-5 w-5 text-orange-500" />;
+    default:
+      return null;
+  }
+};
+
+const getBgColorForTrackType = (type: 'video' | 'audio' | 'caption') => {
+  switch (type) {
+    case 'video':
+      return "bg-blue-500/10";
+    case 'audio':
+      return "bg-green-500/10";
+    case 'caption':
+      return "bg-orange-500/10";
+    default:
+      return "bg-muted/30";
+  }
 }
 
-const TimelineTrack: React.FC<TimelineTrackProps> = ({ title, icon, clips, bgColorClass = "bg-muted/30", totalTimelineDurationSeconds }) => {
+const TimelineTrackDisplay: React.FC<TimelineTrackDisplayProps> = ({ track, projectDuration, selectedClipId, onClipSelect }) => {
   return (
-    <div className={`flex items-stretch border-b last:border-b-0 ${bgColorClass}`}>
+    <div className={`flex items-stretch border-b last:border-b-0 ${getBgColorForTrackType(track.type)}`}>
       <div className="w-48 p-2 border-r flex items-center shrink-0 bg-card">
         <GripVertical className="h-5 w-5 text-muted-foreground mr-1 cursor-grab" />
-        {icon}
-        <span className="ml-2 text-sm font-medium truncate">{title}</span>
+        {getIconForTrackType(track.type)}
+        <span className="ml-2 text-sm font-medium truncate" title={track.name}>{track.name}</span>
       </div>
       <div className="flex-grow h-20 relative p-1 overflow-hidden">
-        {clips.map((clip) => {
-          const clipDuration = clip.end - clip.start;
-          const widthPercentage = totalTimelineDurationSeconds > 0 ? (clipDuration / totalTimelineDurationSeconds) * 100 : 0;
-          const leftPercentage = totalTimelineDurationSeconds > 0 ? (clip.start / totalTimelineDurationSeconds) * 100 : 0;
+        {track.clips.map((clip) => {
+          const clipDurationOnTimeline = clip.sourceEnd - clip.sourceStart;
+          const widthPercentage = projectDuration > 0 ? (clipDurationOnTimeline / projectDuration) * 100 : 0;
+          const leftPercentage = projectDuration > 0 ? (clip.timelineStart / projectDuration) * 100 : 0;
           
           return (
             <div
               key={clip.id}
-              className={`absolute top-1/2 -translate-y-1/2 h-12 rounded-md shadow-sm flex items-center justify-center px-2 text-xs font-medium text-white overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary transition-all ${clip.color}`}
+              className={cn(
+                "absolute top-1/2 -translate-y-1/2 h-12 rounded-md shadow-sm flex items-center justify-center px-2 text-xs font-medium text-white overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary transition-all",
+                clip.color,
+                selectedClipId === clip.id && "ring-2 ring-offset-2 ring-accent"
+              )}
               style={{
                 left: `${leftPercentage}%`,
-                width: `${Math.max(0.5, widthPercentage)}%`, // Ensure a minimum visible width
+                width: `${Math.max(0.5, widthPercentage)}%`,
               }}
-              title={`${clip.name} (${clip.start.toFixed(1)}s - ${clip.end.toFixed(1)}s)`}
+              title={`${clip.name} (${clip.timelineStart.toFixed(1)}s - ${(clip.timelineStart + clipDurationOnTimeline).toFixed(1)}s)`}
+              onClick={() => onClipSelect(clip.id)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClipSelect(clip.id); }}
+              role="button"
+              tabIndex={0}
+              aria-pressed={selectedClipId === clip.id}
+              aria-label={`Select clip ${clip.name}`}
             >
               <span className="truncate">{clip.name}</span>
             </div>
           );
         })}
-        {/* Timeline ruler/grid - scaled by totalTimelineDurationSeconds */}
-        {Array.from({ length: Math.max(1, Math.floor(totalTimelineDurationSeconds / 10)) + 1 }).map((_, i) => {
+        {Array.from({ length: Math.max(1, Math.floor(projectDuration / 10)) + 1 }).map((_, i) => {
           const timeMark = i * 10;
-          if (timeMark > totalTimelineDurationSeconds && totalTimelineDurationSeconds > 0 && i > 0) return null; // Don't draw marks beyond total duration unless it's zero
-          const positionPercentage = totalTimelineDurationSeconds > 0 ? (timeMark / totalTimelineDurationSeconds) * 100 : (i * 10);
+          if (timeMark > projectDuration && projectDuration > 0 && i > 0) return null;
+          const positionPercentage = projectDuration > 0 ? (timeMark / projectDuration) * 100 : (i * 10);
 
           return (
             <div
-              key={`ruler-${i}`}
+              key={`ruler-${track.id}-${i}`}
               className="absolute top-0 bottom-0 border-l border-border/50"
               style={{ left: `${positionPercentage}%` }}
             >
@@ -76,56 +102,35 @@ const TimelineTrack: React.FC<TimelineTrackProps> = ({ title, icon, clips, bgCol
 };
 
 interface TimelineProps {
-  videoMedia: MediaFile | null;
-  audioMediaList: MediaFile[];
+  tracks: Track[];
+  projectDuration: number;
+  selectedClipId: string | null;
+  onClipSelect: (clipId: string) => void;
 }
 
-export default function Timeline({ videoMedia, audioMediaList }: TimelineProps) {
-  // Determine overall timeline duration. For now, let's use the video duration or a default.
-  // This could be more sophisticated, e.g., longest of all media or a project setting.
-  const baseTimelineDuration = 60; // Default 60 seconds
-  const totalTimelineDurationSeconds = videoMedia?.duration 
-    ? Math.max(baseTimelineDuration, videoMedia.duration, ...audioMediaList.map(a => a.duration))
-    : Math.max(baseTimelineDuration, ...audioMediaList.map(a => a.duration));
-
-
-  const videoClips: Clip[] = videoMedia
-    ? [{
-        id: videoMedia.id,
-        name: videoMedia.name,
-        start: 0, // Assuming video clips start at 0 for now
-        end: videoMedia.duration,
-        color: "bg-blue-500",
-        type: 'video',
-        dataUri: videoMedia.dataUri,
-      }]
-    : [];
-
-  const audioClips: Clip[] = audioMediaList.map((audio, index) => ({
-    id: audio.id,
-    name: audio.name,
-    start: 0, // Assuming audio clips start at 0 for now, could be staggered later
-    end: audio.duration,
-    color: "bg-green-500",
-    type: 'audio',
-    dataUri: audio.dataUri,
-  }));
-
-  // Placeholder for captions
-  const captionClips: Clip[] = [];
-
+export default function Timeline({ tracks, projectDuration, selectedClipId, onClipSelect }: TimelineProps) {
   return (
     <Card className="flex-grow flex flex-col shadow-md overflow-hidden">
       <CardHeader className="pb-2 pt-4">
-        <CardTitle className="text-lg font-headline">Timeline ({totalTimelineDurationSeconds.toFixed(0)}s)</CardTitle>
+        <CardTitle className="text-lg font-headline">Timeline ({projectDuration.toFixed(0)}s)</CardTitle>
       </CardHeader>
       <CardContent className="flex-grow p-0 overflow-hidden">
         <ScrollArea className="h-full w-full">
-          {/* Ensure horizontal scroll for timeline content based on a min-width or dynamic width */}
           <div className="min-w-[1200px]"> 
-            <TimelineTrack title="Video Track 1" icon={<Film className="h-5 w-5 text-blue-500" />} clips={videoClips} bgColorClass="bg-blue-500/10" totalTimelineDurationSeconds={totalTimelineDurationSeconds} />
-            <TimelineTrack title="Audio Track 1" icon={<Music2 className="h-5 w-5 text-green-500" />} clips={audioClips} bgColorClass="bg-green-500/10" totalTimelineDurationSeconds={totalTimelineDurationSeconds} />
-            <TimelineTrack title="Captions" icon={<Baseline className="h-5 w-5 text-orange-500" />} clips={captionClips} bgColorClass="bg-orange-500/10" totalTimelineDurationSeconds={totalTimelineDurationSeconds} />
+            {tracks.map(track => (
+              <TimelineTrackDisplay 
+                key={track.id}
+                track={track}
+                projectDuration={projectDuration}
+                selectedClipId={selectedClipId}
+                onClipSelect={onClipSelect}
+              />
+            ))}
+            {tracks.length === 0 && (
+              <div className="h-full flex items-center justify-center text-muted-foreground p-4">
+                Your timeline is empty. Import media or add clips using the toolbox.
+              </div>
+            )}
           </div>
           <ScrollBar orientation="horizontal" />
           <ScrollBar orientation="vertical" />
