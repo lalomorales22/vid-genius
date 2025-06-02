@@ -12,7 +12,7 @@ import TimelineControls from "@/components/vidgenius/TimelineControls";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { useToast } from "@/hooks/use-toast";
 import { generateCaptions, GenerateCaptionsInput, GenerateCaptionsOutput } from "@/ai/flows/generate-captions";
-import { editVideoWithAI, EditVideoWithAIInput, EditVideoWithAIOutput, EditVideoWithAIOutputSchema } from "@/ai/flows/edit-video-with-ai";
+import { editVideoWithAI, EditVideoWithAIInput, EditVideoWithAIOutput } from "@/ai/flows/edit-video-with-ai";
 
 
 export interface MediaFile {
@@ -207,53 +207,64 @@ export default function VidGeniusPage() {
       setMediaLibrary((prevLibrary) => [...prevLibrary, newMediaFile]);
 
       const trackType = file.type.startsWith('video/') ? 'video' : 'audio';
-      let targetTrack: Track | undefined = tracks.find(t => t.type === trackType);
+      let targetTrack: Track | undefined;
       let newClipTimelineStart = 0;
       let toastMessage: string;
-
-      if (targetTrack) {
-        // Add to existing track of this type
-        if (targetTrack.clips.length > 0) {
-          const lastClip = targetTrack.clips[targetTrack.clips.length - 1];
-          newClipTimelineStart = lastClip.timelineStart + (lastClip.sourceEnd - lastClip.sourceStart);
-        }
-        toastMessage = `${newMediaFile.name} added to ${targetTrack.name}.`;
-      } else {
-        // Create new track
-        const newTrackName = `${trackType.charAt(0).toUpperCase() + trackType.slice(1)} Track 1`;
-        const newTrackId = `track-${trackType}-${Date.now()}`;
-        targetTrack = {
-          id: newTrackId,
-          name: newTrackName,
-          type: trackType,
-          clips: [],
-        };
-        toastMessage = `${newMediaFile.name} added to new track: ${targetTrack.name}.`;
-      }
-
-      const newClip: Clip = {
-        id: `clip-${newMediaFile.id}-${Date.now()}`,
-        mediaFileId: newMediaFile.id,
-        trackId: targetTrack.id,
-        name: newMediaFile.name,
-        type: trackType,
-        sourceStart: 0,
-        sourceEnd: newMediaFile.duration,
-        timelineStart: newClipTimelineStart,
-        color: trackType === 'video' ? 'bg-blue-500' : 'bg-green-500',
-      };
-
+      let newTrackIdPrefix = trackType === 'video' ? 'video-track' : 'audio-track';
+      
       setTracks((prevTracks) => {
-        const existingTrackIndex = prevTracks.findIndex(t => t.id === targetTrack!.id);
-        if (existingTrackIndex > -1) {
-          const updatedTracks = [...prevTracks];
-          updatedTracks[existingTrackIndex] = {
-            ...updatedTracks[existingTrackIndex],
-            clips: [...updatedTracks[existingTrackIndex].clips, newClip],
+        const existingTracksOfType = prevTracks.filter(t => t.type === trackType);
+        if (existingTracksOfType.length > 0) {
+          // Add to the first existing track of this type
+          targetTrack = existingTracksOfType[0];
+          if (targetTrack.clips.length > 0) {
+            const lastClip = targetTrack.clips[targetTrack.clips.length - 1];
+            newClipTimelineStart = lastClip.timelineStart + (lastClip.sourceEnd - lastClip.sourceStart);
+          }
+          toastMessage = `${newMediaFile.name} added to ${targetTrack.name}.`;
+
+          const newClip: Clip = {
+            id: `clip-${newMediaFile.id}-${Date.now()}`,
+            mediaFileId: newMediaFile.id,
+            trackId: targetTrack.id,
+            name: newMediaFile.name,
+            type: trackType,
+            sourceStart: 0,
+            sourceEnd: newMediaFile.duration,
+            timelineStart: newClipTimelineStart,
+            color: trackType === 'video' ? 'bg-blue-500' : 'bg-green-500',
           };
-          return updatedTracks;
+
+          return prevTracks.map(t => 
+            t.id === targetTrack!.id 
+              ? { ...t, clips: [...t.clips, newClip] } 
+              : t
+          );
+
         } else {
-          return [...prevTracks, { ...targetTrack!, clips: [newClip] }];
+          // Create new track
+          const newTrackName = `${trackType.charAt(0).toUpperCase() + trackType.slice(1)} Track 1`;
+          const newTrackId = `${newTrackIdPrefix}-${Date.now()}-1`;
+          targetTrack = {
+            id: newTrackId,
+            name: newTrackName,
+            type: trackType,
+            clips: [],
+          };
+          toastMessage = `${newMediaFile.name} added to new track: ${targetTrack.name}.`;
+
+           const newClip: Clip = {
+            id: `clip-${newMediaFile.id}-${Date.now()}`,
+            mediaFileId: newMediaFile.id,
+            trackId: targetTrack.id,
+            name: newMediaFile.name,
+            type: trackType,
+            sourceStart: 0,
+            sourceEnd: newMediaFile.duration,
+            timelineStart: newClipTimelineStart, // Will be 0
+            color: trackType === 'video' ? 'bg-blue-500' : 'bg-green-500',
+          };
+          return [...prevTracks, { ...targetTrack, clips: [newClip] }];
         }
       });
       
@@ -274,7 +285,8 @@ export default function VidGeniusPage() {
         });
       }, 0);
     }
-  }, [tracks, toast]);
+  }, [toast]);
+
 
   const handleAddTextCaption = useCallback((text: string) => {
     if (!text.trim()) {
@@ -284,37 +296,39 @@ export default function VidGeniusPage() {
       return;
     }
 
-    const newClipId = `caption-clip-${Date.now()}`;
-    const captionTrackCount = tracks.filter(t => t.type === 'caption' && t.name.startsWith("Caption Track")).length;
-    const targetTrackId = `track-caption-manual-${Date.now()}-${captionTrackCount + 1}`;
-    const targetTrackName = `Caption Track ${captionTrackCount + 1}`;
+    setTracks(prevTracks => {
+      const newClipId = `caption-clip-${Date.now()}`;
+      const captionTrackCount = prevTracks.filter(t => t.type === 'caption' && t.name.startsWith("Caption Track")).length;
+      const targetTrackId = `track-caption-manual-${Date.now()}-${captionTrackCount + 1}`;
+      const targetTrackName = `Caption Track ${captionTrackCount + 1}`;
 
-    const newCaptionClip: Clip = {
-      id: newClipId,
-      mediaFileId: '',
-      trackId: targetTrackId,
-      name: `Caption: ${text.substring(0, 20)}${text.length > 20 ? '...' : ''}`,
-      type: 'caption',
-      sourceStart: 0, 
-      sourceEnd: DEFAULT_CAPTION_DURATION, 
-      timelineStart: globalCurrentTime,
-      color: 'bg-yellow-500',
-      text: text,
-    };
+      const newCaptionClip: Clip = {
+        id: newClipId,
+        mediaFileId: '', // No media file for text captions
+        trackId: targetTrackId,
+        name: `Caption: ${text.substring(0, 20)}${text.length > 20 ? '...' : ''}`,
+        type: 'caption',
+        sourceStart: 0, 
+        sourceEnd: DEFAULT_CAPTION_DURATION, 
+        timelineStart: globalCurrentTime, // Start at current playhead
+        color: 'bg-yellow-500',
+        text: text,
+      };
 
-    const newTrack: Track = {
-      id: targetTrackId,
-      name: targetTrackName,
-      type: 'caption',
-      clips: [newCaptionClip],
-    };
-    setTracks(prevTracks => [...prevTracks, newTrack]);
+      const newTrack: Track = {
+        id: targetTrackId,
+        name: targetTrackName,
+        type: 'caption',
+        clips: [newCaptionClip],
+      };
 
-    setTimeout(() => {
-      toast({ title: "Text Caption Added", description: `"${newCaptionClip.name}" added to ${newTrack.name}.` });
-    }, 0);
+      setTimeout(() => {
+        toast({ title: "Text Caption Added", description: `"${newCaptionClip.name}" added to ${newTrack.name}.` });
+      }, 0);
+      return [...prevTracks, newTrack];
+    });
+  }, [toast, globalCurrentTime]);
 
-  }, [tracks, toast, globalCurrentTime]);
 
  const handleGenerateSubtitles = useCallback(async (language: string = "en"): Promise<GenerateCaptionsOutput | null> => {
     if (!selectedClipId) {
@@ -343,34 +357,36 @@ export default function VidGeniusPage() {
     try {
       const input: GenerateCaptionsInput = { videoDataUri: mediaFile.dataUri, language };
       const result = await generateCaptions(input);
+      
+      setTracks(prevTracks => {
+        const aiCaptionTrackName = `AI Subtitles for ${selectedClip.name.substring(0,15)}`;
+        const newTrackId = `track-caption-ai-${Date.now()}`;
 
-      const aiCaptionTrackName = `AI Subtitles for ${selectedClip.name.substring(0,15)}`;
-      const newTrackId = `track-caption-ai-${Date.now()}`;
+        const newCaptionClip: Clip = {
+          id: `caption-ai-${Date.now()}`,
+          mediaFileId: '',
+          trackId: newTrackId,
+          name: `AI Subtitles`,
+          type: 'caption',
+          sourceStart: 0,
+          sourceEnd: result.captions.length > 0 ? DEFAULT_CAPTION_DURATION : 0, // Adjust if captions are empty
+          timelineStart: selectedClip.timelineStart,
+          color: 'bg-teal-500',
+          text: result.captions,
+        };
 
-      const newCaptionClip: Clip = {
-        id: `caption-ai-${Date.now()}`,
-        mediaFileId: '',
-        trackId: newTrackId,
-        name: `AI Subtitles`,
-        type: 'caption',
-        sourceStart: 0,
-        sourceEnd: DEFAULT_CAPTION_DURATION, 
-        timelineStart: selectedClip.timelineStart,
-        color: 'bg-teal-500',
-        text: result.captions,
-      };
-
-      const newTrack: Track = {
-        id: newTrackId,
-        name: aiCaptionTrackName,
-        type: 'caption',
-        clips: [newCaptionClip],
-      };
-      setTracks(prevTracks => [...prevTracks, newTrack]);
-
-      setTimeout(() => {
-        toast({ title: "AI Subtitles Generated", description: `Captions added for ${selectedClip.name} on a new track: ${aiCaptionTrackName}.` });
-      }, 0);
+        const newTrack: Track = {
+          id: newTrackId,
+          name: aiCaptionTrackName,
+          type: 'caption',
+          clips: [newCaptionClip],
+        };
+        
+        setTimeout(() => {
+          toast({ title: "AI Subtitles Generated", description: `Captions added for ${selectedClip.name} on a new track: ${aiCaptionTrackName}.` });
+        }, 0);
+        return [...prevTracks, newTrack];
+      });
       return result;
     } catch (error) {
       console.error("Error generating subtitles:", error);
@@ -399,8 +415,8 @@ export default function VidGeniusPage() {
         return { ...track, clips: filteredClips };
       }).filter(track => track !== null) as Track[]; 
 
-      // Renumber standard tracks (Video Track X, Audio Track X, Caption Track X)
       const trackCounts: { [key: string]: number } = { video: 0, audio: 0, caption: 0 }; 
+      let manualCaptionCount = 0;
       
       return newTracks.map(track => {
         let newName = track.name;
@@ -414,8 +430,8 @@ export default function VidGeniusPage() {
             if (track.name.startsWith("AI Subtitles for")) {
                  newName = track.name; 
             } else if (track.name.startsWith("Caption Track")) { 
-                trackCounts.caption++;
-                newName = `Caption Track ${trackCounts.caption}`;
+                manualCaptionCount++;
+                newName = `Caption Track ${manualCaptionCount}`;
             }
         }
         return { ...track, name: newName };
@@ -471,13 +487,13 @@ export default function VidGeniusPage() {
               updatedEnd = Math.min(mediaFile.duration, updatedEnd);
 
               if (updatedStart >= updatedEnd) {
-                if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) {
+                if (newTimes.sourceStart !== undefined && newTimes.sourceEnd === undefined) { // Only start changed
                   updatedStart = Math.min(updatedStart, clip.sourceEnd - 0.1);
                 }
-                else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) {
+                else if (newTimes.sourceEnd !== undefined && newTimes.sourceStart === undefined) { // Only end changed
                   updatedEnd = Math.max(updatedEnd, clip.sourceStart + 0.1);
                 }
-                else {
+                else { // Both changed or one implies the other is invalid
                    updatedStart = Math.min(updatedStart, mediaFile.duration - 0.1);
                    updatedEnd = updatedStart + 0.1;
                 }
@@ -531,7 +547,7 @@ export default function VidGeniusPage() {
 
     try {
       const input: EditVideoWithAIInput = {
-        videoDataUri: mediaFile.dataUri,
+        videoDataUri: mediaFile.dataUri, // For AI context, actual trimming is via parameters
         prompt: promptText,
       };
       const result: EditVideoWithAIOutput = await editVideoWithAI(input);
@@ -571,11 +587,12 @@ export default function VidGeniusPage() {
     const exportData = {
       projectDuration,
       tracks,
-      mediaLibrary: mediaLibrary.map(mf => ({
+      mediaLibrary: mediaLibrary.map(mf => ({ // Send only metadata, not full data URIs for export summary
         id: mf.id,
         name: mf.name,
         type: mf.type,
         duration: mf.duration
+        // dataUri is omitted to keep payload small for this example
       })),
     };
 
@@ -587,12 +604,12 @@ export default function VidGeniusPage() {
     }, 0);
 
     try {
-      const response = await fetch('http://localhost:3001/api/export-video', {
+      const response = await fetch('http://localhost:3001/api/export-video', { // Absolute URL for the Express server
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(exportData),
+        body: JSON.stringify(exportData), // Ensure this is a string
       });
 
       const contentType = response.headers.get("content-type");
@@ -610,6 +627,7 @@ export default function VidGeniusPage() {
           throw new Error(result.message || `Server error: ${response.status}`);
         }
       } else {
+        // Handle non-JSON responses (e.g., HTML error pages if the server is misconfigured or down)
         const textResponse = await response.text();
         console.error("Non-JSON response from server:", textResponse);
         throw new Error(`Server returned a non-JSON response. Status: ${response.status}. Check server logs.`);
@@ -619,7 +637,7 @@ export default function VidGeniusPage() {
       console.error("Export Video Error:", error);
       let description = `Could not send data to server: ${error instanceof Error ? error.message : "Unknown error"}`;
       if (error instanceof TypeError && (error.message.toLowerCase().includes('failed to fetch') || error.message.toLowerCase().includes('networkerror'))) {
-        description = "Failed to connect to the export server. Please ensure the Node.js server (server.js) is running on port 3001 (e.g., using 'npm run server').";
+        description = "Failed to connect to the export server. Please ensure the Node.js server (server.js) is running on port 3001 (e.g., 'npm run server') and check its console for errors.";
       }
       setTimeout(() => {
         toast({
@@ -689,3 +707,5 @@ export default function VidGeniusPage() {
     </SidebarProvider>
   );
 }
+
+
