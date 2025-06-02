@@ -54,19 +54,9 @@ const TimelineTrack: React.FC<TimelineTrackProps> = ({ title, icon, clips, bgCol
 };
 
 export default function Timeline() {
-  const videoClips = [
-    { id: "v1", start: 0, end: 25, color: "bg-blue-500", name: "Opening Scene.mp4" },
-    { id: "v2", start: 30, end: 60, color: "bg-purple-500", name: "Interview.mov" },
-    { id: "v3", start: 65, end: 90, color: "bg-teal-500", name: "B-Roll_Forest.mkv" },
-  ];
-  const audioClips = [
-    { id: "a1", start: 0, end: 90, color: "bg-green-500", name: "Background_Music.mp3" },
-    { id: "a2", start: 30, end: 60, color: "bg-yellow-500", name: "VoiceOver.wav" },
-  ];
-  const captionClips = [
-    { id: "c1", start: 5, end: 20, color: "bg-orange-500", name: "Intro Captions" },
-    { id: "c2", start: 32, end: 58, color: "bg-pink-500", name: "Interview Subtitles" },
-  ];
+  const videoClips: { id: string; start: number; end: number; color: string; name: string }[] = [];
+  const audioClips: { id: string; start: number; end: number; color: string; name: string }[] = [];
+  const captionClips: { id: string; start: number; end: number; color: string; name: string }[] = [];
 
   return (
     <Card className="flex-grow flex flex-col shadow-md overflow-hidden">
