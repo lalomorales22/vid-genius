@@ -6,15 +6,32 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware to parse JSON bodies
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Increase limit if sending large data URIs, though not recommended for production.
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
 
 // Placeholder endpoint for video export
 app.post('/api/export-video', (req, res) => {
   console.log('Video export request received at /api/export-video');
-  console.log('Request body:', req.body);
+  // In a real application, req.body would contain the timeline data,
+  // media file references, caption details, etc.
+  console.log('Request body length:', req.body ? JSON.stringify(req.body).length : 0);
+  
+  // You can log parts of the data to verify, but avoid logging very large objects entirely in production.
+  if (req.body) {
+    console.log('Project Duration:', req.body.projectDuration);
+    console.log('Number of Tracks:', req.body.tracks ? req.body.tracks.length : 0);
+    if (req.body.tracks && req.body.tracks.length > 0) {
+        console.log('First track type:', req.body.tracks[0].type);
+        console.log('Number of clips in first track:', req.body.tracks[0].clips ? req.body.tracks[0].clips.length : 0);
+    }
+    console.log('Number of Media Files in Library (summary):', req.body.mediaLibrary ? req.body.mediaLibrary.length : 0);
+  }
+  
+
   // In a real application, you would trigger your video processing logic here.
   // This might involve:
-  // 1. Receiving timeline data, media file references, caption details, etc.
+  // 1. Receiving timeline data, media file references (or IDs if files are pre-uploaded/accessible), caption details, etc. from req.body.
   // 2. Using a library like FFmpeg (or a cloud service) to:
   //    - Decode all source video/audio files.
   //    - Composite video tracks.
@@ -25,8 +42,13 @@ app.post('/api/export-video', (req, res) => {
 
   res.status(200).json({ 
     success: true, 
-    message: 'Mock export process started. Implement actual video processing logic here.',
-    details: 'This endpoint is a placeholder. Actual video export requires server-side processing capabilities (e.g., using FFmpeg).'
+    message: 'Video export request received by server. Actual video processing logic (e.g., using FFmpeg) needs to be implemented here.',
+    details: 'This endpoint is a placeholder. It received project data but did not process it into a video file.',
+    data_summary: {
+        projectDuration: req.body.projectDuration,
+        numTracks: req.body.tracks ? req.body.tracks.length : 0,
+        numMediaFiles: req.body.mediaLibrary ? req.body.mediaLibrary.length : 0,
+    }
   });
 });
 
@@ -40,3 +62,4 @@ app.listen(PORT, () => {
   console.log(`Node.js server listening on port ${PORT}`);
   console.log(`Video export endpoint available at http://localhost:${PORT}/api/export-video`);
 });
+

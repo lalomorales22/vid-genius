@@ -259,9 +259,8 @@ export default function VidGeniusPage() {
     }
 
     const newClipId = `caption-clip-${Date.now()}`;
-    // Ensure each manual caption gets its own track
     const captionTrackCount = tracks.filter(t => t.type === 'caption' && t.name.startsWith("Caption Track")).length;
-    const targetTrackId = `track-caption-manual-${Date.now()}`;
+    const targetTrackId = `track-caption-manual-${Date.now()}`; // Unique ID for each new manual caption track
     const targetTrackName = `Caption Track ${captionTrackCount + 1}`;
     
     const newCaptionClip: Clip = {
@@ -324,16 +323,15 @@ export default function VidGeniusPage() {
         id: `caption-ai-${Date.now()}`,
         mediaFileId: '', 
         trackId: '', // Will be set below
-        name: `AI Subtitles for ${selectedClip.name}`,
+        name: `AI Subtitles for ${selectedClip.name.substring(0,15)}`,
         type: 'caption',
         sourceStart: 0, 
         sourceEnd: DEFAULT_CAPTION_DURATION, // Default duration, AI ideally should provide timing
         timelineStart: selectedClip.timelineStart, 
-        color: 'bg-teal-500', // Different color for AI subs
+        color: 'bg-teal-500', 
         text: result.captions,
       };
 
-      // Give AI subtitles their own distinct track
       const aiCaptionTrackName = `AI Subtitles for ${selectedClip.name.substring(0,15)}`;
       const newTrackId = `track-caption-ai-${Date.now()}`;
       newCaptionClip.trackId = newTrackId;
@@ -370,14 +368,12 @@ export default function VidGeniusPage() {
     setTracks(prevTracks => {
       const newTracks = prevTracks.map(track => {
         const filteredClips = track.clips.filter(clip => clip.id !== selectedClipId);
-        // If track becomes empty after deleting the clip, remove the track itself
         if (filteredClips.length === 0 && track.clips.some(c => c.id === selectedClipId)) {
           return null;
         }
         return { ...track, clips: filteredClips };
       }).filter(track => track !== null) as Track[]; 
 
-      // Re-number tracks to maintain sequential naming if tracks were removed
       const trackCounts: { [key: string]: number } = { video: 0, audio: 0, caption: 0 };
       let aiSubtitleCount = 0;
       let manualCaptionCount = 0;
@@ -390,10 +386,8 @@ export default function VidGeniusPage() {
         } else if (track.type === 'caption') {
             if (track.name.startsWith("AI Subtitles for")) {
                  aiSubtitleCount++;
-                 // Keep AI subtitle names unique if possible, or re-evaluate naming logic
-                 // For simplicity, we'll just re-number if needed, but this might lose original clip association in name
-                 newName = track.name; // Or `AI Subtitles ${aiSubtitleCount}`
-            } else {
+                 newName = track.name; 
+            } else if (track.name.startsWith("Caption Track")) {
                 manualCaptionCount++;
                 newName = `Caption Track ${manualCaptionCount}`;
             }
@@ -438,16 +432,16 @@ export default function VidGeniusPage() {
 
             if (clip.type === 'caption') {
               updatedStart = Math.max(0, updatedStart);
-              if (newTimes.sourceEnd !== undefined) { // If sourceEnd (duration) is being explicitly set for caption
-                 updatedEnd = Math.max(0.1, updatedEnd); // Caption has minimum duration
-              } else { // If only sourceStart is being adjusted for a caption (less common)
+              if (newTimes.sourceEnd !== undefined) { 
+                 updatedEnd = Math.max(0.1, updatedEnd); 
+              } else { 
                 if (updatedStart >= clip.sourceEnd) {
-                    updatedEnd = updatedStart + 0.1; // Maintain min duration relative to new start
+                    updatedEnd = updatedStart + 0.1; 
                 } else {
-                    updatedEnd = clip.sourceEnd; // Keep original duration if only start is moved
+                    updatedEnd = clip.sourceEnd; 
                 }
               }
-            } else if (mediaFile) { // Video or Audio clips
+            } else if (mediaFile) { 
               updatedStart = Math.max(0, updatedStart);
               updatedEnd = Math.min(mediaFile.duration, updatedEnd);
 
@@ -486,15 +480,58 @@ export default function VidGeniusPage() {
     );
   }, [mediaLibrary, toast]);
 
-  const handleExportVideo = useCallback(() => {
+  const handleExportVideo = useCallback(async () => {
+    const exportData = {
+      projectDuration,
+      tracks,
+      // Note: Sending full dataUris in mediaLibrary can be very large.
+      // A real implementation might send only media IDs/references,
+      // assuming the server can access the original files.
+      // For this example, we'll keep it simple but be mindful of payload size.
+      mediaLibrary: mediaLibrary.map(mf => ({ id: mf.id, name: mf.name, type: mf.type, duration: mf.duration /* dataUri excluded for brevity/performance */})),
+    };
+
     setTimeout(() => {
       toast({
-        title: "Export Video (Placeholder)",
-        description: "True video export is a complex feature requiring backend processing or advanced client-side libraries. This feature is not yet fully implemented.",
-        duration: 5000,
+        title: "Sending to Server...",
+        description: "Preparing video data for export.",
       });
     }, 0);
-  }, [toast]);
+
+    try {
+      const response = await fetch('/api/export-video', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(exportData),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        setTimeout(() => {
+          toast({
+            title: "Export Request Sent",
+            description: result.message || "Server has received the video data. Further processing needed on server.",
+            duration: 7000,
+          });
+        }, 0);
+      } else {
+        throw new Error(result.message || "Server error during export request.");
+      }
+    } catch (error) {
+      console.error("Export Video Error:", error);
+      setTimeout(() => {
+        toast({
+          title: "Export Failed",
+          description: `Could not send data to server: ${error instanceof Error ? error.message : "Unknown error"}`,
+          variant: "destructive",
+          duration: 7000,
+        });
+      }, 0);
+    }
+  }, [toast, projectDuration, tracks, mediaLibrary]);
 
 
   return (
@@ -552,3 +589,4 @@ export default function VidGeniusPage() {
     </SidebarProvider>
   );
 }
+
