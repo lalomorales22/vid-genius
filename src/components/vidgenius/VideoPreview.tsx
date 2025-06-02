@@ -32,87 +32,107 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
   const [isMuted, setIsMuted] = useState(false);
   const [mediaType, setMediaType] = useState<'video' | 'audio' | null>(null);
 
-  const _loadMedia = useCallback(() => {
+  useEffect(() => {
+    if (previewableItem) {
+      const newMediaType = previewableItem.mediaFile.type.startsWith('video/') ? 'video' : 'audio';
+      setMediaType(newMediaType);
+    } else {
+      setMediaType(null);
+      // Reset states when no item is selected
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setClipDuration(0);
+      if (mediaRef.current) {
+        mediaRef.current.removeAttribute('src');
+        mediaRef.current.load(); // Important to reset the media element
+      }
+    }
+  }, [previewableItem]);
+
+  useEffect(() => {
     const mediaElement = mediaRef.current;
-    if (!mediaElement || !previewableItem) {
-        setIsPlaying(false);
-        setCurrentTime(0);
-        setClipDuration(0);
-        setMediaType(null);
-        if (mediaElement) {
-            mediaElement.removeAttribute('src');
-            mediaElement.load();
-        }
-        return;
+
+    if (!previewableItem || !mediaElement) {
+      return;
     }
 
     const { mediaFile, clip } = previewableItem;
-    
-    setMediaType(mediaFile.type.startsWith('video/') ? 'video' : 'audio');
-    mediaElement.src = mediaFile.dataUri;
-    mediaElement.load();
 
     const handleLoadedMetadata = () => {
-      mediaElement.currentTime = clip.sourceStart;
-      setClipDuration(clip.sourceEnd - clip.sourceStart);
-      setCurrentTime(0);
-      setIsPlaying(false); 
+      if (mediaRef.current) { // Check ref again inside async handler
+        mediaRef.current.currentTime = clip.sourceStart;
+        setClipDuration(clip.sourceEnd - clip.sourceStart);
+        setCurrentTime(0); // Reset current time relative to clip
+        setIsPlaying(false); // Ensure it starts paused
+         if (mediaRef.current.muted !== isMuted) { // Sync mute state
+          mediaRef.current.muted = isMuted;
+        }
+      }
     };
 
-    mediaElement.onloadedmetadata = handleLoadedMetadata;
-    mediaElement.onerror = () => {
-        console.error("Error loading media for preview:", mediaFile.name);
-        setClipDuration(0);
-        setCurrentTime(0);
-        setIsPlaying(false);
-    }
-
-  }, [previewableItem]);
-
-
-  useEffect(() => {
-    _loadMedia(); // Initial load and when previewableItem changes
-
-    const mediaElement = mediaRef.current;
-    if (!mediaElement || !previewableItem) return;
-
-    const { clip } = previewableItem;
+    const handleError = () => {
+      console.error("Error loading media for preview:", mediaFile.name);
+      setClipDuration(0);
+      setCurrentTime(0);
+      setIsPlaying(false);
+    };
 
     const handleTimeUpdate = () => {
-      if (mediaElement.currentTime >= clip.sourceEnd) {
-        mediaElement.pause();
+      if (!mediaRef.current || !previewableItem) return; // Guard with previewableItem
+      const currentMediaTime = mediaRef.current.currentTime;
+      const { clip: currentClip } = previewableItem; // Use currentClip from item
+
+      if (currentMediaTime >= currentClip.sourceEnd) {
+        mediaRef.current.pause();
         setIsPlaying(false);
-        setCurrentTime(clip.sourceEnd - clip.sourceStart); // Show full clip duration
-      } else if (mediaElement.currentTime < clip.sourceStart && !mediaElement.seeking) {
-        // If player somehow goes before sourceStart (e.g. after seeking before and playing)
-        // Forcibly set it to sourceStart, though this case should be rare with proper seek handling
-        mediaElement.currentTime = clip.sourceStart;
+        setCurrentTime(currentClip.sourceEnd - currentClip.sourceStart);
+      } else if (currentMediaTime < currentClip.sourceStart && !mediaRef.current.seeking) {
+        // This case should ideally be prevented by seek logic, but as a fallback:
+        mediaRef.current.currentTime = currentClip.sourceStart;
         setCurrentTime(0);
       } else {
-        setCurrentTime(mediaElement.currentTime - clip.sourceStart);
+        setCurrentTime(currentMediaTime - currentClip.sourceStart);
       }
     };
 
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
-    const handleEnded = () => { // This might fire if native duration is reached before clip.sourceEnd
+    
+    // This handles when the media natively ends, ensure it respects clip boundaries
+    const handleEnded = () => {
       setIsPlaying(false);
-      setCurrentTime(Math.min(mediaElement.duration, clip.sourceEnd) - clip.sourceStart);
+      if (mediaRef.current && previewableItem) {
+        // Set current time to the end of the clip segment
+        setCurrentTime(previewableItem.clip.sourceEnd - previewableItem.clip.sourceStart);
+        // Optionally, seek media element to clip.sourceEnd if needed
+        // mediaRef.current.currentTime = previewableItem.clip.sourceEnd;
+      }
     };
     
-    mediaElement.addEventListener("timeupdate", handleTimeUpdate);
-    mediaElement.addEventListener("play", handlePlay);
-    mediaElement.addEventListener("pause", handlePause);
-    mediaElement.addEventListener("ended", handleEnded);
+    // Detach previous listeners before attaching new ones if mediaElement itself is persistent
+    // However, since <video>/<audio> tag might change, direct add/remove is safer per item change.
+    
+    mediaElement.src = mediaFile.dataUri;
+    
+    mediaElement.addEventListener('loadedmetadata', handleLoadedMetadata);
+    mediaElement.addEventListener('error', handleError);
+    mediaElement.addEventListener('timeupdate', handleTimeUpdate);
+    mediaElement.addEventListener('play', handlePlay);
+    mediaElement.addEventListener('pause', handlePause);
+    mediaElement.addEventListener('ended', handleEnded);
+
+    mediaElement.load(); // Start loading the new source
 
     return () => {
-      mediaElement.removeEventListener("timeupdate", handleTimeUpdate);
-      mediaElement.removeEventListener("play", handlePlay);
-      mediaElement.removeEventListener("pause", handlePause);
-      mediaElement.removeEventListener("ended", handleEnded);
+      mediaElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      mediaElement.removeEventListener('error', handleError);
+      mediaElement.removeEventListener('timeupdate', handleTimeUpdate);
+      mediaElement.removeEventListener('play', handlePlay);
+      mediaElement.removeEventListener('pause', handlePause);
+      mediaElement.removeEventListener('ended', handleEnded);
+      // No need to remove src here as the new item will set its own or it will be cleared if item is null
     };
-  }, [previewableItem, _loadMedia]);
-
+  }, [previewableItem, mediaType, isMuted]); // Add mediaType and isMuted to ensure effect runs if those cause changes affecting media
 
   const togglePlayPause = () => {
     const media = mediaRef.current;
@@ -122,10 +142,15 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
     if (isPlaying) {
       media.pause();
     } else {
+      // Ensure media.currentTime is within the clip's bounds before playing
       if (media.currentTime < clip.sourceStart || media.currentTime >= clip.sourceEnd) {
-         media.currentTime = clip.sourceStart; // Reset to clip start if outside range
+         media.currentTime = clip.sourceStart;
+         setCurrentTime(0); // Reflect this change in UI
       }
-      media.play().catch(error => console.error("Error playing media:", error));
+      media.play().catch(error => {
+        console.error("Error playing media:", error);
+        setIsPlaying(false); // Ensure state consistency on error
+      });
     }
   };
 
@@ -133,19 +158,17 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
     const media = mediaRef.current;
     if (!media || !previewableItem) return;
     const { clip } = previewableItem;
-    const newMediaTime = clip.sourceStart + timeWithinClip;
+    // Ensure seek time is within 0 and clip duration
+    const newTimeInClip = Math.max(0, Math.min(timeWithinClip, clip.sourceEnd - clip.sourceStart));
+    const newMediaTime = clip.sourceStart + newTimeInClip;
     
-    if (newMediaTime >= clip.sourceStart && newMediaTime <= clip.sourceEnd) {
-      media.currentTime = newMediaTime;
-      setCurrentTime(timeWithinClip); // Update UI immediately
-    }
+    media.currentTime = newMediaTime;
+    setCurrentTime(newTimeInClip);
   };
 
   const handleSkip = (amount: number) => {
-    if (!mediaRef.current || !previewableItem) return;
-    const { clip } = previewableItem;
-    const currentClipTime = mediaRef.current.currentTime - clip.sourceStart;
-    const newClipTime = Math.max(0, Math.min(clipDuration, currentClipTime + amount));
+    if (!previewableItem || clipDuration <= 0) return;
+    const newClipTime = Math.max(0, Math.min(clipDuration, currentTime + amount));
     handleSeek(newClipTime);
   };
 
@@ -169,7 +192,7 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
   const toggleFullScreen = () => {
     const media = mediaRef.current;
     if (media instanceof HTMLVideoElement && media.requestFullscreen) {
-      media.requestFullscreen();
+      media.requestFullscreen().catch(err => console.error("Error entering fullscreen:", err));
     }
   };
   
@@ -183,20 +206,25 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
               className="w-full h-full object-contain"
               onClick={togglePlayPause}
               onDoubleClick={toggleFullScreen}
-              playsInline // Good for mobile
+              playsInline
+              muted={isMuted} // Controlled mute
             />
           )}
           {mediaType === 'audio' && previewableItem && (
             <>
-              <audio ref={mediaRef as React.Ref<HTMLAudioElement>} playsInline />
-              <div className="flex flex-col items-center text-muted-foreground p-4">
+              <audio 
+                ref={mediaRef as React.Ref<HTMLAudioElement>} 
+                playsInline 
+                muted={isMuted} // Controlled mute
+              />
+              <div className="flex flex-col items-center text-muted-foreground p-4 pointer-events-none">
                 <Music className="w-24 h-24 mb-4" />
                 <p className="text-lg font-semibold">{previewableItem.mediaFile.name}</p>
                 <p className="text-sm">Audio track</p>
               </div>
             </>
           )}
-          {(!previewableItem || mediaType === null) && (
+          {(!previewableItem) && ( // Simpler condition: if no item, show placeholder
             <Image
               src="https://placehold.co/1280x720.png"
               alt="Media preview placeholder"
@@ -206,7 +234,6 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
               priority
             />
           )}
-          {/* Overlay for play button */}
           {previewableItem && !isPlaying && (
              <div 
                 className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover/videoplayer:opacity-100 transition-opacity duration-200 cursor-pointer"
@@ -239,13 +266,13 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" aria-label="Rewind 5s" onClick={() => handleSkip(-5)} disabled={!previewableItem}>
+              <Button variant="ghost" size="icon" aria-label="Rewind 5s" onClick={() => handleSkip(-5)} disabled={!previewableItem || clipDuration <= 0}>
                 <SkipBack className="h-5 w-5" />
               </Button>
-              <Button variant="ghost" size="icon" aria-label={isPlaying ? "Pause" : "Play"} onClick={togglePlayPause} disabled={!previewableItem}>
+              <Button variant="ghost" size="icon" aria-label={isPlaying ? "Pause" : "Play"} onClick={togglePlayPause} disabled={!previewableItem || clipDuration <= 0}>
                 {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
               </Button>
-              <Button variant="ghost" size="icon" aria-label="Fast Forward 5s" onClick={() => handleSkip(5)} disabled={!previewableItem}>
+              <Button variant="ghost" size="icon" aria-label="Fast Forward 5s" onClick={() => handleSkip(5)} disabled={!previewableItem || clipDuration <= 0}>
                 <SkipForward className="h-5 w-5" />
               </Button>
               <Button variant="ghost" size="icon" aria-label={isMuted ? "Unmute" : "Mute"} onClick={toggleMute} disabled={!previewableItem}>
@@ -266,5 +293,3 @@ export default function VideoPreview({ previewableItem }: VideoPreviewProps) {
     </Card>
   );
 }
-
-    
