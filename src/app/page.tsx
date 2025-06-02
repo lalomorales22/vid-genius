@@ -67,7 +67,7 @@ export default function VidGeniusPage() {
       track.clips.forEach(clip => {
         let clipDuration = 0;
         if (clip.type === 'caption') {
-          clipDuration = clip.sourceEnd - clip.sourceStart; // Captions use sourceStart/End for duration
+          clipDuration = clip.sourceEnd - clip.sourceStart; 
         } else {
           clipDuration = clip.sourceEnd - clip.sourceStart;
         }
@@ -170,7 +170,7 @@ export default function VidGeniusPage() {
         mediaElement.remove();
       };
       mediaElement.onerror = () => {
-        resolve(0);
+        resolve(0); // Resolve with 0 if there's an error
         URL.revokeObjectURL(objectUrl);
         mediaElement.remove();
         console.error("Error loading media metadata for duration check");
@@ -259,60 +259,40 @@ export default function VidGeniusPage() {
     }
 
     const newClipId = `caption-clip-${Date.now()}`;
-    let targetTrackId = '';
-    let targetTrackName = '';
-
-    const existingCaptionTracks = tracks.filter(t => t.type === 'caption');
-    if (existingCaptionTracks.length > 0) {
-      // Add to the first existing caption track for simplicity, or create new if desired
-      targetTrackId = existingCaptionTracks[0].id;
-    } else {
-      targetTrackId = `track-caption-${Date.now()}`;
-      targetTrackName = `Caption Track 1`;
-    }
+    // Ensure each manual caption gets its own track
+    const captionTrackCount = tracks.filter(t => t.type === 'caption' && t.name.startsWith("Caption Track")).length;
+    const targetTrackId = `track-caption-manual-${Date.now()}`;
+    const targetTrackName = `Caption Track ${captionTrackCount + 1}`;
     
     const newCaptionClip: Clip = {
       id: newClipId,
-      mediaFileId: '', // No media file for text captions
+      mediaFileId: '', 
       trackId: targetTrackId,
       name: `Caption: ${text.substring(0, 20)}${text.length > 20 ? '...' : ''}`,
       type: 'caption',
-      sourceStart: 0, // For captions, sourceStart is 0
-      sourceEnd: DEFAULT_CAPTION_DURATION, // And sourceEnd is the duration
-      timelineStart: globalCurrentTime, // Add at current playhead time
+      sourceStart: 0, 
+      sourceEnd: DEFAULT_CAPTION_DURATION, 
+      timelineStart: globalCurrentTime, 
       color: 'bg-yellow-500',
       text: text,
     };
+    
+    const newTrack: Track = {
+      id: targetTrackId,
+      name: targetTrackName,
+      type: 'caption',
+      clips: [newCaptionClip],
+    };
+    setTracks(prevTracks => [...prevTracks, newTrack]);
 
-    setTracks(prevTracks => {
-      let trackExists = false;
-      const updatedTracks = prevTracks.map(track => {
-        if (track.id === targetTrackId) {
-          trackExists = true;
-          return { ...track, clips: [...track.clips, newCaptionClip] };
-        }
-        return track;
-      });
-
-      if (!trackExists) {
-        const newTrack: Track = {
-          id: targetTrackId,
-          name: targetTrackName || `Caption Track ${existingCaptionTracks.length + 1}`,
-          type: 'caption',
-          clips: [newCaptionClip],
-        };
-        return [...updatedTracks, newTrack];
-      }
-      return updatedTracks;
-    });
 
     setTimeout(() => {
-      toast({ title: "Text Caption Added", description: `"${newCaptionClip.name}" added to the timeline.` });
+      toast({ title: "Text Caption Added", description: `"${newCaptionClip.name}" added to ${newTrack.name}.` });
     }, 0);
 
   }, [tracks, toast, globalCurrentTime]);
 
-  const handleGenerateSubtitles = useCallback(async (language: string = "en") => {
+ const handleGenerateSubtitles = useCallback(async (language: string = "en"): Promise<GenerateCaptionsOutput | null> => {
     if (!selectedClipId) {
       setTimeout(() => {
         toast({ title: "No clip selected", description: "Please select a video clip to generate subtitles.", variant: "default" });
@@ -341,37 +321,32 @@ export default function VidGeniusPage() {
       const result = await generateCaptions(input);
 
       const newCaptionClip: Clip = {
-        id: `caption-${Date.now()}`,
+        id: `caption-ai-${Date.now()}`,
         mediaFileId: '', 
-        trackId: '', 
-        name: `Subtitles for ${selectedClip.name}`,
+        trackId: '', // Will be set below
+        name: `AI Subtitles for ${selectedClip.name}`,
         type: 'caption',
         sourceStart: 0, 
-        sourceEnd: DEFAULT_CAPTION_DURATION, // Default duration, can be adjusted
+        sourceEnd: DEFAULT_CAPTION_DURATION, // Default duration, AI ideally should provide timing
         timelineStart: selectedClip.timelineStart, 
-        color: 'bg-yellow-500',
+        color: 'bg-teal-500', // Different color for AI subs
         text: result.captions,
       };
 
-      let captionTrack = tracks.find(t => t.type === 'caption' && t.name.includes("Caption Track")); 
-      if (captionTrack) {
-        newCaptionClip.trackId = captionTrack.id;
-        setTracks(prevTracks => prevTracks.map(t => 
-          t.id === captionTrack!.id ? { ...t, clips: [...t.clips, newCaptionClip] } : t
-        ));
-      } else {
-        const newTrackId = `track-caption-${Date.now()}`;
-        newCaptionClip.trackId = newTrackId;
-        const newTrack: Track = {
-          id: newTrackId,
-          name: `Caption Track 1`,
-          type: 'caption',
-          clips: [newCaptionClip],
-        };
-        setTracks(prevTracks => [...prevTracks, newTrack]);
-      }
-       setTimeout(() => {
-        toast({ title: "Subtitles Generated", description: `Captions added for ${selectedClip.name}.` });
+      // Give AI subtitles their own distinct track
+      const aiCaptionTrackName = `AI Subtitles for ${selectedClip.name.substring(0,15)}`;
+      const newTrackId = `track-caption-ai-${Date.now()}`;
+      newCaptionClip.trackId = newTrackId;
+      const newTrack: Track = {
+        id: newTrackId,
+        name: aiCaptionTrackName,
+        type: 'caption',
+        clips: [newCaptionClip],
+      };
+      setTracks(prevTracks => [...prevTracks, newTrack]);
+
+      setTimeout(() => {
+        toast({ title: "AI Subtitles Generated", description: `Captions added for ${selectedClip.name} on a new track.` });
       }, 0);
       return result;
     } catch (error) {
@@ -395,18 +370,37 @@ export default function VidGeniusPage() {
     setTracks(prevTracks => {
       const newTracks = prevTracks.map(track => {
         const filteredClips = track.clips.filter(clip => clip.id !== selectedClipId);
+        // If track becomes empty after deleting the clip, remove the track itself
         if (filteredClips.length === 0 && track.clips.some(c => c.id === selectedClipId)) {
           return null;
         }
         return { ...track, clips: filteredClips };
       }).filter(track => track !== null) as Track[]; 
 
+      // Re-number tracks to maintain sequential naming if tracks were removed
       const trackCounts: { [key: string]: number } = { video: 0, audio: 0, caption: 0 };
+      let aiSubtitleCount = 0;
+      let manualCaptionCount = 0;
+
       return newTracks.map(track => {
-        trackCounts[track.type]++;
+        let newName = track.name;
+        if (track.type === 'video' || track.type === 'audio') {
+            trackCounts[track.type]++;
+            newName = `${track.type.charAt(0).toUpperCase() + track.type.slice(1)} Track ${trackCounts[track.type]}`;
+        } else if (track.type === 'caption') {
+            if (track.name.startsWith("AI Subtitles for")) {
+                 aiSubtitleCount++;
+                 // Keep AI subtitle names unique if possible, or re-evaluate naming logic
+                 // For simplicity, we'll just re-number if needed, but this might lose original clip association in name
+                 newName = track.name; // Or `AI Subtitles ${aiSubtitleCount}`
+            } else {
+                manualCaptionCount++;
+                newName = `Caption Track ${manualCaptionCount}`;
+            }
+        }
         return {
           ...track,
-          name: `${track.type.charAt(0).toUpperCase() + track.type.slice(1)} Track ${trackCounts[track.type]}`
+          name: newName
         };
       });
     });
@@ -443,11 +437,15 @@ export default function VidGeniusPage() {
             let updatedTimelineStart = newTimes.timelineStart !== undefined ? newTimes.timelineStart : clip.timelineStart;
 
             if (clip.type === 'caption') {
-              // For captions, sourceStart is usually 0, sourceEnd is duration.
-              // timelineStart can be updated freely.
               updatedStart = Math.max(0, updatedStart);
-              if (updatedStart >= updatedEnd) {
-                updatedEnd = updatedStart + 0.1; // Ensure min duration
+              if (newTimes.sourceEnd !== undefined) { // If sourceEnd (duration) is being explicitly set for caption
+                 updatedEnd = Math.max(0.1, updatedEnd); // Caption has minimum duration
+              } else { // If only sourceStart is being adjusted for a caption (less common)
+                if (updatedStart >= clip.sourceEnd) {
+                    updatedEnd = updatedStart + 0.1; // Maintain min duration relative to new start
+                } else {
+                    updatedEnd = clip.sourceEnd; // Keep original duration if only start is moved
+                }
               }
             } else if (mediaFile) { // Video or Audio clips
               updatedStart = Math.max(0, updatedStart);
@@ -472,14 +470,15 @@ export default function VidGeniusPage() {
                    return clip; 
                  }
               }
-            } else { // No media file and not a caption, shouldn't happen for video/audio
+            } else { 
               return clip;
             }
-
+            
+            const updatedClip = { ...clip, sourceStart: updatedStart, sourceEnd: updatedEnd, timelineStart: updatedTimelineStart };
             setTimeout(() => {
               toast({ title: "Clip Updated", description: `Clip ${clip.name} updated.`});
             }, 0);
-            return { ...clip, sourceStart: updatedStart, sourceEnd: updatedEnd, timelineStart: updatedTimelineStart };
+            return updatedClip;
           }
           return clip;
         })
@@ -487,13 +486,23 @@ export default function VidGeniusPage() {
     );
   }, [mediaLibrary, toast]);
 
+  const handleExportVideo = useCallback(() => {
+    setTimeout(() => {
+      toast({
+        title: "Export Video (Placeholder)",
+        description: "True video export is a complex feature requiring backend processing or advanced client-side libraries. This feature is not yet fully implemented.",
+        duration: 5000,
+      });
+    }, 0);
+  }, [toast]);
+
 
   return (
     <SidebarProvider defaultOpen={true}>
       <div className="flex h-screen bg-background text-foreground overflow-hidden">
          <SidebarInset>
           <div className="flex flex-col h-full overflow-auto"> 
-            <AppHeader />
+            <AppHeader onExportVideo={handleExportVideo} />
             <main className="flex-1 p-4 lg:p-6 space-y-4 overflow-y-auto"> 
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
                 <div className="xl:col-span-2 space-y-4">

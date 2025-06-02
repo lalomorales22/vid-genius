@@ -6,7 +6,11 @@ import { Download, Menu, Bot } from "lucide-react";
 import { useSidebar } from "@/components/ui/sidebar";
 import Link from "next/link";
 
-export default function AppHeader() {
+interface AppHeaderProps {
+  onExportVideo: () => void;
+}
+
+export default function AppHeader({ onExportVideo }: AppHeaderProps) {
   const { toggleSidebar, isMobile } = useSidebar();
 
   return (
@@ -26,7 +30,7 @@ export default function AppHeader() {
         </Link>
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="default" className="bg-accent hover:bg-accent/90 text-accent-foreground">
+        <Button variant="default" className="bg-accent hover:bg-accent/90 text-accent-foreground" onClick={onExportVideo}>
           <Download className="mr-2 h-4 w-4" />
           Export Video
         </Button>
